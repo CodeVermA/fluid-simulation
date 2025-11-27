@@ -1,0 +1,75 @@
+STABLE FLUIDS ALGORITHM NOTES
+Conceptual Reference for Real-Time Fluid Simulation
+
+--------------------------------------------------------------------------------
+1. ADVECTION (The "Movement" Step)
+--------------------------------------------------------------------------------
+GOAL: Move the fluid quantities (density and velocity) according to the
+velocity field.
+
+THE PROBLEM:
+Simply moving data "forward" (Pushing) is mathematically unstable and can
+explode the simulation.
+
+THE SOLUTION: Semi-Lagrangian Advection (Looking Backward)
+Instead of calculating where a particle goes *to*, we calculate where it
+came *from*.
+
+ALGORITHM:
+1. Go to the center of a cell (x, y).
+2. Look at the velocity vector at that cell (vx, vy).
+3. Trace backwards in time: previous_pos = (x, y) - (vx, vy) * dt.
+4. Sample the value at 'previous_pos' (using interpolation).
+5. Set the new value of the current cell to that sampled value.
+
+ANALOGY:
+"The weather reporter doesn't guess where the wind goes. They say:
+'The wind brought this cold air from the North.'"
+
+--------------------------------------------------------------------------------
+2. DIFFUSION (The "Spreading" Step)
+--------------------------------------------------------------------------------
+GOAL: Simulate viscosity (thickness/resistance). Even still fluids spread out
+over time.
+
+ALGORITHM:
+We use an iterative solver (Jacobi Method/Gauss-Seidel) to spread values.
+We set a cell's new value to be the average of its 4 neighbors.
+
+FORMULA:
+Cell_New = (Cell_Old + a * (Neighbor_Left + Neighbor_Right + Neighbor_Up + Neighbor_Down)) / (1 + 4a)
+
+* High viscosity = thick fluid (honey/syrup).
+* Low viscosity = thin fluid (water/alcohol).
+
+NOTE:
+In real-time graphical sims, advection often creates enough natural "blur"
+that we sometimes skip explicit diffusion to save performance.
+
+--------------------------------------------------------------------------------
+3. PRESSURE PROJECTION (The "Swirl" Step)
+--------------------------------------------------------------------------------
+GOAL: Enforce Incompressibility.
+Fluids like water don't compress. If fluid moves into a cell, it must push
+fluid out of that cell. This checks prevents the fluid from acting like a gas.
+
+ALGORITHM (3 Steps):
+
+Step A: Calculate Divergence
+- Measure how much fluid is entering/leaving each cell.
+- Divergence > 0: More leaving (Source/Vacuum).
+- Divergence < 0: More entering (Sink/Compressed).
+
+Step B: Solve for Pressure
+- We need a Pressure field that counteracts the Divergence.
+- Use the Jacobi method (similar to diffusion) to smooth out the pressure
+  until the system is balanced.
+
+Step C: Subtract Gradient
+- Update the Velocity field by subtracting the pressure gradient.
+- If a cell has high pressure, push velocity away from it.
+- If a cell has low pressure, pull velocity towards it.
+
+RESULT:
+This step destroys the "compression" and forces the velocity field to curl
+and swirl, creating vortices (The "Swirl" behavior).
