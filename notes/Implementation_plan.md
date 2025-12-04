@@ -26,12 +26,12 @@
 
 **Objectives:**
 
-- [ ] Implement 64×64 CPU-based fluid solver in JavaScript
+- [✔] Implement 64×64 CPU-based fluid solver in JavaScript
 - [ ] Core components:
   - Semi-Lagrangian advection
   - Jacobi pressure solver
   - Velocity projection
-- [ ] Create Canvas2D visualization
+- [✔] Create Canvas2D visualization
 - [ ] Validate with divergence checks
 
 **Deliverables:** Working CPU prototype with verified incompressibility
