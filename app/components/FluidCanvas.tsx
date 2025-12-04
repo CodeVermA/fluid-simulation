@@ -1,17 +1,41 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-// We will import the solver here in Week 2
-// import { FluidSolver } from '../simulation/cpu/FluidSolver';
+import { useEffect, useRef, useCallback } from 'react';
+import { FluidSolver } from '../simulation/cpu/FluidSolver';
 
+// CONSTANTS
+const SCALE_FACTOR = 10;
+const TIME_STEP = 0.1;
+const DENSITY_AMOUNT = 1;
+
+// TYPES
 interface Props {
   width: number;
   height: number;
 }
 
-export default function FluidCanvas({ width, height }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+interface GridCoordinates {
+  x: number;
+  y: number;
+}
 
+// HELPER FUNCTIONS
+function getGridCoordinates(e: React.PointerEvent<HTMLCanvasElement>,): GridCoordinates {
+  const rect = e.currentTarget.getBoundingClientRect();
+
+  return {
+    x: Math.floor((e.clientX - rect.left) / SCALE_FACTOR),
+    y: Math.floor((e.clientY - rect.top) / SCALE_FACTOR),
+  };
+}
+
+// COMPONENT
+export default function FluidCanvas({ width, height }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null); // Canvas Element
+  const solverRef = useRef<FluidSolver | null>(null); // Fluid Solver Instance
+  let animationId: number;
+
+  // Animation Loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -19,45 +43,60 @@ export default function FluidCanvas({ width, height }: Props) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // --- INITIALIZATION ---
-    console.log("Initializing Fluid Simulation...");
-    // const solver = new FluidSolver(width, height);
+    console.log('Initializing Fluid Simulation...');
+    
+    solverRef.current = new FluidSolver(width); // Assuming square grid for simplicity
 
-    let animationId: number;
-
-    // --- SIMULATION LOOP ---
     const loop = () => {
-      // 1. Update Physics
-      // solver.step();
-
-      // 2. Draw
-      // ctx.clearRect(0, 0, width, height); // Clear screen
-      // solver.render(ctx); 
-      
-      // Temporary: Just prove it's running
-      ctx.fillStyle = 'black';
-      ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = 'cyan';
-      ctx.fillText(`Sim Running: ${Date.now()}`, 20, 30);
-
+      if (solverRef.current) {
+        solverRef.current.step(TIME_STEP);
+        solverRef.current.render(ctx);
+      }
       animationId = requestAnimationFrame(loop);
     };
 
     loop();
 
-    // --- CLEANUP ---
     return () => {
-      cancelAnimationFrame(animationId);
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
     };
   }, [width, height]);
 
+  // Event Handlers
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!solverRef.current) return;
+
+    const { x, y } = getGridCoordinates(e);
+    solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
+    
+    console.log(`Added density at Grid: (${x}, ${y})`);
+  }, []);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.buttons !== 1 || !solverRef.current) return; // Only respond to primary button drag
+
+    const { x, y } = getGridCoordinates(e);
+    solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
+    
+    console.log(`Added density at Grid: (${x}, ${y})`);
+  }, []);
+  
+
+  // Render
   return (
-    <canvas 
-      ref={canvasRef} 
-      width={width} 
+    <canvas
+      ref={canvasRef}
+      width={width}
       height={height}
       className="border border-gray-700 shadow-lg rounded-lg"
-      style={{ width: '512px', height: '512px' }} // Scale up visually
+      style={{
+        width: `${width * SCALE_FACTOR}px`,
+        height: `${height * SCALE_FACTOR}px`,
+      }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
     />
   );
 }
