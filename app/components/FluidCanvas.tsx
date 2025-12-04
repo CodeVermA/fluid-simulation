@@ -4,9 +4,10 @@ import { useEffect, useRef, useCallback } from 'react';
 import { FluidSolver } from '../simulation/cpu/FluidSolver';
 
 // CONSTANTS
-const SCALE_FACTOR = 10;
+const SCALE_FACTOR = 8;
 const TIME_STEP = 0.1;
 const DENSITY_AMOUNT = 1;
+const VELOCITY = { x: 15, y: 0};
 
 // TYPES
 interface Props {
@@ -70,7 +71,8 @@ export default function FluidCanvas({ width, height }: Props) {
 
     const { x, y } = getGridCoordinates(e);
     solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
-    
+    solverRef.current.addVelocity(y, x, VELOCITY.x, VELOCITY.y);
+
     console.log(`Added density at Grid: (${x}, ${y})`);
   }, []);
 
@@ -79,7 +81,8 @@ export default function FluidCanvas({ width, height }: Props) {
 
     const { x, y } = getGridCoordinates(e);
     solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
-    
+    solverRef.current.addVelocity(y, x, VELOCITY.x, VELOCITY.y);
+
     console.log(`Added density at Grid: (${x}, ${y})`);
   }, []);
   

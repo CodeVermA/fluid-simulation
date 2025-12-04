@@ -251,8 +251,8 @@ export class FluidSolver {
   }
 
   step(dt: number) {
-    const visc = 0.0001;
-    const diff = 0.0001; // Smoke diffusion
+    const visc = 0.01;
+    const diff = 0.01; // Smoke diffusion
 
     // 1. VELOCITY STEP
     // Diffuse X and Y velocity
@@ -307,6 +307,8 @@ export class FluidSolver {
       this.curr_velocityY,
       dt
     );
+
+    this.checkDivergence();
   }
 
   render(ctx: CanvasRenderingContext2D) {
@@ -329,6 +331,26 @@ export class FluidSolver {
     }
 
     ctx.putImageData(this.imageData!, 0, 0);
+  }
+
+  checkDivergence(): void {
+    let totalDivergence = 0;
+
+    for (let row = 1; row <= this.GRID_RES; row++) {
+      for (let col = 1; col <= this.GRID_RES; col++) {
+        const idx = this.idx2Dto1D(row, col);
+        const divergence =
+          (this.curr_velocityX[this.idx2Dto1D(row, col + 1)] -
+            this.curr_velocityX[this.idx2Dto1D(row, col - 1)] +
+            this.curr_velocityY[this.idx2Dto1D(row + 1, col)] -
+            this.curr_velocityY[this.idx2Dto1D(row - 1, col)]) /
+          (2 * this.GRID_RES);
+        totalDivergence += Math.abs(divergence);
+      }
+    }
+
+    const avgDivergence = totalDivergence / (this.GRID_RES * this.GRID_RES);
+    console.log(`Average Divergence: ${Math.round(avgDivergence * 1e7) / 1e7}`);
   }
 
   /**
