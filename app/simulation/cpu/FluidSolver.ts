@@ -252,7 +252,7 @@ export class FluidSolver {
 
   step(dt: number) {
     const visc = 0.01;
-    const diff = 0.01; // Smoke diffusion
+    const diff = 0.00001; // Smoke diffusion
 
     // 1. VELOCITY STEP
     // Diffuse X and Y velocity

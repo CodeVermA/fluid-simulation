@@ -1,2 +1,1 @@
-https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf
-https://developer.chrome.com/docs/web-platform/webgpu/build-app
+ https://developer.chrome.com/docs/web-platform/webgpu/build-app

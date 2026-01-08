@@ -7,7 +7,7 @@ import { FluidSolver } from '../simulation/cpu/FluidSolver';
 const SCALE_FACTOR = 8;
 const TIME_STEP = 0.1;
 const DENSITY_AMOUNT = 1;
-const VELOCITY = { x: 15, y: 0};
+const VELOCITY = { x: 0, y: 10};
 
 // TYPES
 interface Props {
