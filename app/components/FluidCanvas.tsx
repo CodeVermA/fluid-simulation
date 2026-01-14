@@ -7,7 +7,7 @@ import { FluidSolver } from '../simulation/cpu/FluidSolver';
 const SCALE_FACTOR = 8;
 const TIME_STEP = 0.1;
 const DENSITY_AMOUNT = 1;
-const VELOCITY = { x: 0, y: 10};
+const VELOCITY = { x: 0, y: 10 };
 
 // TYPES
 interface Props {
@@ -45,7 +45,7 @@ export default function FluidCanvas({ width, height }: Props) {
     if (!ctx) return;
 
     console.log('Initializing Fluid Simulation...');
-    
+
     solverRef.current = new FluidSolver(width); // Assuming square grid for simplicity
 
     const loop = () => {
@@ -85,7 +85,7 @@ export default function FluidCanvas({ width, height }: Props) {
 
     console.log(`Added density at Grid: (${x}, ${y})`);
   }, []);
-  
+
 
   // Render
   return (
