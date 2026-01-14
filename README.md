@@ -1,36 +1,133 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Fluid Dynamics Simulator
 
-## Getting Started
+Real-time WebGL2 fluid simulator implementing **Jos Stam's Stable Fluids algorithm** (1999). Interactive visualization of the Navier-Stokes equations for incompressible fluid flow.
 
-First, run the development server:
+**University Dissertation Project** — Computational Fluid Dynamics
+
+## Live Demo
+
+**[Try it live on Vercel →](#)** https://fluid-simulation-eosin.vercel.app
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 20+ and npm
+- Modern browser with WebGL2 support
+
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/CodeVermA/fluid-simulation.git
+cd fluid-simulation
+
+# Install dependencies
+npm install
+
+# Run development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) and choose:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `/cpu` — CPU-based solver. MAX 128x128 grid
+- `/gpu` — GPU-accelerated solver. MAX 720p grid
+### Build for Production
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm start
+```
 
-## Learn More
+## Architecture
 
-To learn more about Next.js, take a look at the following resources:
+```
+app/
+├── page.tsx                    # Landing page
+├── cpu/page.tsx               # CPU solver demo
+├── gpu/page.tsx               # GPU solver demo
+├── components/
+│   ├── FluidCanvas.tsx        # CPU: Canvas2D renderer
+│   └── FluidCanvasGPU.tsx     # GPU: WebGL2 renderer
+└── simulation/
+    ├── cpu/FluidSolver.ts     # Float32Array implementation
+    └── gpu/
+        ├── FluidSolverGPU.ts  # WebGL2 Stable Fluids
+        ├── GPUResources.ts    # FBO/shader/VAO manager
+        └── shaders/
+            └── fluidShaders.ts # GLSL ES 3.00 sources
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Algorithm Overview
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Based on Jos Stam's **Stable Fluids** (SIGGRAPH 1999):
 
-## Deploy on Vercel
+1. **Advection** — Semi-Lagrangian backward particle tracing
+2. **Diffusion** — Implicit solve via Jacobi iteration
+3. **Pressure Projection** — 3-stage incompressibility enforcement:
+   - Compute divergence (∇·v)
+   - Solve Poisson equation (∇²p = ∇·v)
+   - Subtract pressure gradient (v_new = v - ∇p)
+4. **Vorticity Confinement** — Amplify rotational motion lost to dissipation
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Tech Stack
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Framework:** Next.js 16 (React 19)
+- **Language:** TypeScript 5
+- **Styling:** Tailwind CSS 4
+- **Graphics:** WebGL2 / Canvas2D
+- **Deployment:** Vercel (static export)
+
+## Performance
+
+| Implementation | Resolution | Typical FPS |
+| -------------- | ---------- | ----------- |
+| CPU            | 128×128    | ~30 FPS     |
+| GPU (WebGL2)   | 720p       | ~60 FPS     |
+
+_Target: 60 FPS at 1024x720 (optimization in progress)_
+
+## Academic Context
+
+This project is part of a dissertation on real-time computational fluid dynamics. Key research areas:
+
+- Numerical stability in grid-based solvers
+- GPU acceleration techniques for PDE solvers
+- Interactive visualization of complex physical systems
+
+## References
+
+- [Stable Fluids (Stam, 1999)](https://pages.cs.wisc.edu/~chaol/data/cs777/stam-stable_fluids.pdf)
+- [Real-Time Fluid Dynamics for Games (Stam, 2003)](https://www.dgp.toronto.edu/public_user/stam/reality/Research/pdf/GDC03.pdf)
+- [WebGL2 Specification](https://www.khronos.org/registry/webgl/specs/latest/2.0/)
+
+## Development
+
+```bash
+# Run linter
+npm run lint
+
+# Type checking
+npx tsc --noEmit
+
+# Local build test
+npm run build
+```
+
+## License
+
+MIT License — See LICENSE file for details
+
+## Acknowledgments
+- Jos Stam for the Stable Fluids algorithm
+- WebGL community for shader optimization techniques
+- University supervisor for academic guidance
+
+---
+
+**Author:** Vasu Verma
+
+**Institution:** The University of Edinburgh
+
+**Year:** 2026

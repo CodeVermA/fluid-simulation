@@ -23,7 +23,7 @@ export default function CPUPage() {
 
       {/* Simulation Canvas */}
       <div className="relative flex place-items-center">
-        <FluidCanvas width={512} height={512} />
+        <FluidCanvas width={64} height={64} />
       </div>
 
       {/* Info Section */}
