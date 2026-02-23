@@ -1,17 +1,28 @@
 /**
- * GLSL shader sources for GPU-accelerated fluid simulation.
- * All shaders use WebGL2 (GLSL ES 3.00) with floating-point precision.
+ * Fluid Simulation Shaders (GLSL ES 3.00)
+ *
+ * WebGL2 shader programs inspired from Jos Stam's Stable Fluids algorithm (1999).
+ * All shaders operate on 2D textures representing fluid quantities (velocity, density, pressure).
  */
 
+// Common constants and macros
+const SHADER_CONSTANTS = `
+#define ZERO vec4(0.0) // Used for solid cells and empty density
+#define OBSTACLE_THRESHOLD 0.5
+
+#define OFFSETX vec2(u_texelSize.x, 0.0)
+#define OFFSETY vec2(0.0, u_texelSize.y)
+`;
+
 /**
- * Vertex shader for full-screen quad rendering.
- * Converts clip-space positions [-1,1] to UV coordinates [0,1].
+ * Standard fullscreen quad vertex shader. Maps normalized device coordinates [-1,1]
+ * to texture coordinates [0,1] for fragment shaders.
  */
 export const VERTEX_SHADER = `#version 300 es
 precision highp float;
 
-layout(location = 0) in vec2 a_position;
-out vec2 v_texCoord;
+layout(location = 0) in vec2 a_position; // Setting the index of the attribute to 0
+out vec2 v_texCoord; // Current pixel the shader is running on
 
 void main() {
     v_texCoord = a_position * 0.5 + 0.5;  // Convert from [-1,-1] to [0,0]
@@ -20,71 +31,11 @@ void main() {
 `;
 
 /**
- * Advection shader implementing semi-Lagrangian method.
- * Traces particles backward in time and samples using hardware bilinear interpolation.
- * Obstacle-aware: clamps backtraced position to prevent sampling through walls.
- */
-export const ADVECT_SHADER = `#version 300 es
-precision highp float;
-
-in vec2 v_texCoord;
-
-uniform sampler2D u_velocity;
-uniform sampler2D u_source; // velocity or density
-uniform sampler2D u_obstacles;
-uniform vec2 u_texelSize;
-uniform float u_dt;
-uniform float u_dissipation;
-
-out vec4 outColor;
-
-void main() {
-    // 1. Solid cells are empty.
-    if (texture(u_obstacles, v_texCoord).r > 0.1) {
-        outColor = vec4(0.0);
-        return;
-    }
-
-    // 2. Trace Back (Method of Characteristics - Section 2.1)
-    vec2 velocity = texture(u_velocity, v_texCoord).xy;
-    vec2 previousCoord = v_texCoord - (velocity * u_dt * u_texelSize);
-
-    // 3. Clamp to fluid domain to prevent mass loss at boundaries
-    // If backtrace hits a wall, iteratively step back until we find fluid
-    float wallAtSource = texture(u_obstacles, previousCoord).r;
-    
-    if (wallAtSource > 0.1) {
-        // Instead of zeroing, clamp the backtrace to stay in fluid region
-        // Try stepping back less aggressively
-        vec2 delta = previousCoord - v_texCoord;
-        float stepFactor = 0.9;
-        
-        for (int i = 0; i < 5; i++) {
-            previousCoord = v_texCoord - (delta * stepFactor);
-            wallAtSource = texture(u_obstacles, previousCoord).r;
-            
-            if (wallAtSource < 0.1) {
-                break; // Found fluid region
-            }
-            stepFactor *= 0.8; // Reduce step further
-        }
-        
-        // If still in wall after attempts, use current cell value (mass conservation)
-        if (wallAtSource > 0.1) {
-            previousCoord = v_texCoord;
-        }
-    }
-    
-    outColor = texture(u_source, previousCoord);
-
-    // 4. Dissipation (Eq 247 in PDF)
-    outColor *= u_dissipation;
-}
-`;
-
-/**
- * Render shader for visualizing density field on screen.
- * Converts density texture to RGB output.
+ * Visualizes a texture to the screen framebuffer. Typically used to render the
+ * density field (dye) to make the fluid motion visible.
+ *
+ * Uniforms:
+ *   - u_texture (sampler2D): Source texture to display
  */
 export const RENDER_SHADER = `#version 300 es
 precision highp float;
@@ -100,8 +51,15 @@ void main() {
 `;
 
 /**
- * Splat shader for adding density or velocity at a point.
- * Uses Gaussian falloff for smooth, circular splats.
+ * Adds a Gaussian splat to a texture, used for mouse interaction. Can splat
+ * colored dye (density) or directional force (velocity).
+ *
+ * Uniforms:
+ *   - u_target (sampler2D): Texture to splat onto (density or velocity)
+ *   - u_aspectRatio (float): Canvas width/height ratio to correct circular splats
+ *   - u_point (vec2): Splat center in UV coordinates [0,1]
+ *   - u_color (vec3): RGB color for density OR (dx, dy, 0) for velocity impulse
+ *   - u_radius (float): Gaussian falloff radius (default ~0.0002 in UV space)
  */
 export const SPLAT_SHADER = `#version 300 es
 precision highp float;
@@ -127,266 +85,369 @@ void main() {
 `;
 
 /**
- * Divergence shader for computing velocity field divergence.
- * Uses central differences to measure expansion/compression.
- * Obstacle-aware: treats solid boundaries properly.
+ * Advects a quantity (velocity or density) through the velocity field using
+ * semi-Lagrangian method with RK2 integration. Core of Stable Fluids algorithm.
+ *
+ * Uniforms:
+ *   - u_velocity (sampler2D): Velocity field to trace through
+ *   - u_source (sampler2D): Quantity to advect (velocity or density texture)
+ *   - u_obstacles (sampler2D): Obstacle mask (1.0 = solid, 0.0 = fluid)
+ *   - u_texelSize (vec2): (1/width, 1/height) for neighbor sampling
+ *   - u_dt (float): Timestep (default 1/60 seconds)
  */
-export const DIVERGENCE_SHADER = `#version 300 es
-    precision highp float;
+export const ADVECT_SHADER = `#version 300 es
+precision highp float;
 
-    in vec2 v_texCoord;
-    uniform sampler2D u_velocity;
-    uniform sampler2D u_obstacles;
-    uniform vec2 u_texelSize;
+${SHADER_CONSTANTS}
 
-    out vec4 outColor;
+in vec2 v_texCoord;
 
-    void main() {
-        if (texture(u_obstacles, v_texCoord).r > 0.1) {
-            outColor = vec4(0.0);
-            return;
-        }
+uniform sampler2D u_velocity;
+uniform sampler2D u_source; // velocity or density
+uniform sampler2D u_obstacles;
+uniform vec2 u_texelSize;
+uniform float u_dt;
 
-        // Neighbors
-        float L = texture(u_velocity, v_texCoord - vec2(u_texelSize.x, 0.0)).x;
-        float R = texture(u_velocity, v_texCoord + vec2(u_texelSize.x, 0.0)).x;
-        float B = texture(u_velocity, v_texCoord - vec2(0.0, u_texelSize.y)).y;
-        float T = texture(u_velocity, v_texCoord + vec2(0.0, u_texelSize.y)).y;
+out vec4 outColor;
 
-        // Obstacle Velocities are effectively 0 (No Slip/Free Slip masked at boundary)
-        float oL = texture(u_obstacles, v_texCoord - vec2(u_texelSize.x, 0.0)).r;
-        float oR = texture(u_obstacles, v_texCoord + vec2(u_texelSize.x, 0.0)).r;
-        float oB = texture(u_obstacles, v_texCoord - vec2(0.0, u_texelSize.y)).r;
-        float oT = texture(u_obstacles, v_texCoord + vec2(0.0, u_texelSize.y)).r;
-
-        if (oL > 0.1) L = 0.0;
-        if (oR > 0.1) R = 0.0;
-        if (oB > 0.1) B = 0.0;
-        if (oT > 0.1) T = 0.0;
-
-        float div = 0.5 * (R - L + T - B);
-        outColor = vec4(div, 0.0, 0.0, 1.0);
+void main() {
+    // 1. Solid cells are empty.
+    if (texture(u_obstacles, v_texCoord).r > OBSTACLE_THRESHOLD) {
+        outColor = ZERO;
+        return;
     }
-`;
+
+    // 2. Backtrace using RK2
+    vec2 velocity = texture(u_velocity, v_texCoord).xy;
+
+    vec2 midPos = v_texCoord - (0.5 * u_dt * velocity * u_texelSize);
+    midPos = clamp(midPos, vec2(0.0), vec2(1.0)); // Stay within bounds
+    vec2 midVelocity = texture(u_velocity, midPos).xy;
+    
+    vec2 prevPos = v_texCoord - (u_dt * midVelocity * u_texelSize);
+    prevPos = clamp(prevPos, vec2(0.0), vec2(1.0)); // Stay within bounds
+
+    // 3. Hit obstacle during backtrace
+    if (texture(u_obstacles, prevPos).x > OBSTACLE_THRESHOLD) {
+        outColor = ZERO; 
+    } else {
+        outColor = texture(u_source, prevPos);
+    }
+}`;
 
 /**
- * Generalized Relaxation Shader (Jacobi).
- * Solves linear systems of form: x = ( alpha * sum(neighbors) + b ) / beta
- * * USED FOR:
- * 1. Diffusion (Eq 198): (I - v*dt*Laplacian) w3 = w2
- * 2. Projection (Eq 4): Laplacian q = div(w3)
+ * Jacobi iteration for solving linear systems Ax = b. Used for both pressure
+ * projection (incompressibility) and diffusion. Requires multiple passes with
+ * ping-pong buffers.
+ *
+ * Uniforms:
+ *   - u_x (sampler2D): Current solution estimate
+ *   - u_b (sampler2D): Right-hand side
+ *   - u_obstacles (sampler2D): Obstacle mask
+ *   - u_alpha (float): Stencil coefficient
+ *   - u_beta (float): Diagonal coefficient
+ *   - u_isPressure (bool): TRUE for pressure projection, FALSE for diffusion
+ *   - u_freeSlip (bool): TRUE for free-slip BC (reflect tangential), FALSE for no-slip
+ *   - u_texelSize (vec2): (1/width, 1/height)
  */
 export const ITERATE_SHADER = `#version 300 es
     precision highp float;
+
+    ${SHADER_CONSTANTS}
+    #define NOSLIP vec4(1.0, 0.0, 0.0, 1.0)
 
     in vec2 v_texCoord;
 
     uniform sampler2D u_x; // Current solution estimate (x)
     uniform sampler2D u_b; // Center term (b)
     uniform sampler2D u_obstacles;
-    uniform vec2 u_texelSize;
     
     uniform float u_alpha;
     uniform float u_beta;
+    uniform bool u_isPressure; // TRUE for projection, FALSE for diffusion
+    uniform bool u_freeSlip; // TRUE for free-slip BC, FALSE for no-slip BC
+    uniform vec2 u_texelSize;
 
     out vec4 outColor;
 
     void main() {
-        // Neighbors
-        vec4 L = texture(u_x, v_texCoord - vec2(u_texelSize.x, 0.0));
-        vec4 R = texture(u_x, v_texCoord + vec2(u_texelSize.x, 0.0));
-        vec4 B = texture(u_x, v_texCoord - vec2(0.0, u_texelSize.y));
-        vec4 T = texture(u_x, v_texCoord + vec2(0.0, u_texelSize.y));
+        // Solid cells remain empty
+        if (texture(u_obstacles, v_texCoord).r > OBSTACLE_THRESHOLD) {
+            outColor = texture(u_x, v_texCoord);
+            return;
+        }
 
         vec4 bC = texture(u_b, v_texCoord);
-        
-        // Use Center Solution for Neumann BC
         vec4 xC = texture(u_x, v_texCoord);
-        
-        float oL = texture(u_obstacles, v_texCoord - vec2(u_texelSize.x, 0.0)).r;
-        float oR = texture(u_obstacles, v_texCoord + vec2(u_texelSize.x, 0.0)).r;
-        float oB = texture(u_obstacles, v_texCoord - vec2(0.0, u_texelSize.y)).r;
-        float oT = texture(u_obstacles, v_texCoord + vec2(0.0, u_texelSize.y)).r;
 
-        // If neighbor is wall, assume it has same value as center (Gradient = 0)
-        if (oL > 0.1) L = xC;
-        if (oR > 0.1) R = xC;
-        if (oB > 0.1) B = xC;
-        if (oT > 0.1) T = xC;
+        // Neighbors
+        vec4 L, R, B, T;
 
-        // Standard Jacobi Iteration
-        outColor = (L + R + B + T + (bC * u_alpha)) / u_beta;
+        // Left neighbor
+        if (texture(u_obstacles, v_texCoord - OFFSETX).r > OBSTACLE_THRESHOLD) {
+            L = u_isPressure ? xC : (u_freeSlip ? vec4(-xC.x, xC.y, 0.0, 0.0) : NOSLIP);
+        }
+        else L = texture(u_x, v_texCoord - OFFSETX);
+
+        // Right neighbor
+        if (texture(u_obstacles, v_texCoord + OFFSETX).r > OBSTACLE_THRESHOLD) {
+            R = u_isPressure ? xC : (u_freeSlip ? vec4(-xC.x, xC.y, 0.0, 0.0) : NOSLIP);
+        }
+        else R = texture(u_x, v_texCoord + OFFSETX);
+
+        // Bottom neighbor
+        if (texture(u_obstacles, v_texCoord - OFFSETY).r > OBSTACLE_THRESHOLD) {
+            B = u_isPressure ? xC : (u_freeSlip ? vec4(xC.x, -xC.y, 0.0, 0.0) : NOSLIP);
+        }
+        else B = texture(u_x, v_texCoord - OFFSETY);
+
+        // Top neighbor
+        if (texture(u_obstacles, v_texCoord + OFFSETY).r > OBSTACLE_THRESHOLD) {
+            T = u_isPressure ? xC : (u_freeSlip ? vec4(xC.x, -xC.y, 0.0, 0.0) : NOSLIP);
+        }
+        else T = texture(u_x, v_texCoord + OFFSETY);
+    
+        // Jacobi iteration 
+        outColor = (bC + u_alpha * (L + R + B + T)) / u_beta;
     }
 `;
 
 /**
- * Gradient subtraction shader for projection step.
- * Removes pressure gradient from velocity to make field divergence-free.
+ * Computes divergence ∇·v of velocity field. Measures "compressibility" -
+ * how much fluid is expanding/contracting at each point. Should be ~0 for
+ * incompressible flow; deviations are corrected by pressure projection.
+ *
+ * Uniforms:
+ *   - u_velocity (sampler2D): Velocity field (u,v) in RG channels
+ *   - u_obstacles (sampler2D): Obstacle mask
+ *   - u_texelSize (vec2): (1/width, 1/height) for numerical derivatives
+ *   - u_freeSlip (bool): TRUE for free-slip BC, FALSE for no-slip
+ */
+export const DIVERGENCE_SHADER = `#version 300 es
+    precision highp float;
+
+    ${SHADER_CONSTANTS}
+
+    in vec2 v_texCoord;
+
+    uniform sampler2D u_velocity;
+    uniform sampler2D u_obstacles;
+    uniform vec2 u_texelSize;
+    uniform bool u_freeSlip;
+
+    out vec4 outColor;
+
+    void main() {
+        if (texture(u_obstacles, v_texCoord).r > OBSTACLE_THRESHOLD) {
+            outColor = ZERO;
+            return;
+        }
+
+        // Neighbors
+        float L = texture(u_velocity, v_texCoord - OFFSETX).x;
+        float R = texture(u_velocity, v_texCoord + OFFSETX).x;
+        float B = texture(u_velocity, v_texCoord - OFFSETY).y;
+        float T = texture(u_velocity, v_texCoord + OFFSETY).y;
+
+        // Obstacle Velocities are effectively 0 (No Slip/Free Slip masked at boundary)
+        float oL = texture(u_obstacles, v_texCoord - OFFSETX).r;
+        float oR = texture(u_obstacles, v_texCoord + OFFSETX).r;
+        float oB = texture(u_obstacles, v_texCoord - OFFSETY).r;
+        float oT = texture(u_obstacles, v_texCoord + OFFSETY).r;
+
+        vec2 centerVel = texture(u_velocity, v_texCoord).xy;
+        float xReflect = u_freeSlip ? -centerVel.x : 0.0;
+        float yReflect = u_freeSlip ? -centerVel.y : 0.0;
+        
+        if (oL > OBSTACLE_THRESHOLD) L = xReflect;
+        if (oR > OBSTACLE_THRESHOLD) R = xReflect;
+        if (oB > OBSTACLE_THRESHOLD) B = yReflect;
+        if (oT > OBSTACLE_THRESHOLD) T = yReflect;
+        
+        // Calculate Divergence
+        float div = 0.5 * (R - L + T - B);
+        outColor = vec4(div, 0.0, 0.0, 1.0);
+    }
+`;
+
+/**
+ * Final step of pressure projection: subtracts pressure gradient from velocity
+ * to enforce incompressibility (∇·v = 0). Applies Helmholtz-Hodge decomposition.
+ *
+ * Uniforms:
+ *   - u_velocity (sampler2D): Velocity field after advection (still has divergence)
+ *   - u_pressure (sampler2D): Pressure field from Jacobi solver (∇²p = ∇·v)
+ *   - u_obstacles (sampler2D): Obstacle mask
+ *   - u_texelSize (vec2): (1/width, 1/height) for gradient calculation
  */
 export const GRADIENT_SUBTRACT_SHADER = `#version 300 es
 precision highp float;
+
+${SHADER_CONSTANTS}
+
 in vec2 v_texCoord;
+
 uniform sampler2D u_velocity;
 uniform sampler2D u_pressure;
 uniform sampler2D u_obstacles;
 uniform vec2 u_texelSize;
+
 out vec4 outColor;
 
 void main() {
-    if (texture(u_obstacles, v_texCoord).r > 0.1) {
-        outColor = vec4(0.0);
+    // Solid cells remain empty
+    if (texture(u_obstacles, v_texCoord).r > OBSTACLE_THRESHOLD) {
+        outColor = ZERO;
         return;
     }
 
-    float pL = texture(u_pressure, v_texCoord - vec2(u_texelSize.x, 0.0)).r;
-    float pR = texture(u_pressure, v_texCoord + vec2(u_texelSize.x, 0.0)).r;
-    float pB = texture(u_pressure, v_texCoord - vec2(0.0, u_texelSize.y)).r;
-    float pT = texture(u_pressure, v_texCoord + vec2(0.0, u_texelSize.y)).r;
     float pC = texture(u_pressure, v_texCoord).r;
 
-    float oL = texture(u_obstacles, v_texCoord - vec2(u_texelSize.x, 0.0)).r;
-    float oR = texture(u_obstacles, v_texCoord + vec2(u_texelSize.x, 0.0)).r;
-    float oB = texture(u_obstacles, v_texCoord - vec2(0.0, u_texelSize.y)).r;
-    float oT = texture(u_obstacles, v_texCoord + vec2(0.0, u_texelSize.y)).r;
+    //  Neighboring pressures
+    float pL, pR, pB, pT;
 
-    // Enforce Neumann BC (dp/dn = 0) at walls
-    if (oL > 0.1) pL = pC;
-    if (oR > 0.1) pR = pC;
-    if (oB > 0.1) pB = pC;
-    if (oT > 0.1) pT = pC;
+    // Obstacles
+    float oL = texture(u_obstacles, v_texCoord - OFFSETX).r;
+    float oR = texture(u_obstacles, v_texCoord + OFFSETX).r;
+    float oB = texture(u_obstacles, v_texCoord - OFFSETY).r;
+    float oT = texture(u_obstacles, v_texCoord + OFFSETY).r;
 
-    vec2 vel = texture(u_velocity, v_texCoord).xy;
-    vel.x -= 0.5 * (pR - pL);
-    vel.y -= 0.5 * (pT - pB);
+    // Left neighbor
+    if (oL > OBSTACLE_THRESHOLD) pL = pC;
+    else pL = texture(u_pressure, v_texCoord - OFFSETX).r;
+    // Right neighbor
+    if (oR > OBSTACLE_THRESHOLD) pR = pC;
+    else pR = texture(u_pressure, v_texCoord + OFFSETX).r;
 
-    outColor = vec4(vel, 0.0, 1.0);
+    // Bottom neighbor
+    if (oB > OBSTACLE_THRESHOLD) pB = pC;
+    else pB = texture(u_pressure, v_texCoord - OFFSETY).r;
+    // Top neighbor
+    if (oT > OBSTACLE_THRESHOLD) pT = pC;
+    else pT = texture(u_pressure, v_texCoord + OFFSETY).r;
+
+
+    // Compute gradient
+    vec2 gradient = vec2(pR - pL, pT - pB) * 0.5;
+
+    // Subtract gradient from velocity
+    vec2 velocity = texture(u_velocity, v_texCoord).xy;
+    vec2 newVelocity = velocity + gradient;
+
+    // Corrected velocity
+    outColor = vec4(newVelocity, 0.0, 1.0);
 }
 `;
 
-export const CURL_SHADER = `#version 300 es
-    precision highp float;
-
-    in vec2 v_texCoord;
-
-    uniform sampler2D u_velocity;
-    uniform vec2 u_texelSize;
-
-    out vec4 outColor;
-
-    void main() {
-        // Get neighbors
-        float L = texture(u_velocity, v_texCoord - vec2(u_texelSize.x, 0.0)).y;
-        float R = texture(u_velocity, v_texCoord + vec2(u_texelSize.x, 0.0)).y;
-        float T = texture(u_velocity, v_texCoord + vec2(0.0, u_texelSize.y)).x;
-        float B = texture(u_velocity, v_texCoord - vec2(0.0, u_texelSize.y)).x;
-
-        // Calculate Curl (Vorticity)
-        // Ideally: (dy/dx - dx/dy)
-        float vorticity = 0.5 * ((R - L) - (T - B));
-
-        outColor = vec4(vorticity, 0.0, 0.0, 1.0);
-    }
-`;
-
 /**
- * Boundary shader for enforcing velocity boundary conditions at walls.
- * Implements free-slip: normal velocity = 0, tangential velocity preserved with slight damping.
+ * Computes the curl (vorticity) of the velocity field.
+ * Curl measures rotation at each point - positive = counterclockwise, negative = clockwise.
+ * Used as input for vorticity confinement to restore small-scale turbulence.
+ *
+ * Uniforms:
+ *   - u_velocity (sampler2D): Velocity field
+ *   - u_texelSize (vec2): (1/width, 1/height) for numerical derivatives
  */
-export const BOUNDARY_SHADER = `#version 300 es
+export const CURL_SHADER = `#version 300 es
 precision highp float;
+
+${SHADER_CONSTANTS}
 
 in vec2 v_texCoord;
 
 uniform sampler2D u_velocity;
-uniform sampler2D u_obstacles;
 uniform vec2 u_texelSize;
-uniform float u_damping;
 
 out vec4 outColor;
 
 void main() {
+    // Sample neighboring velocities
+    float vL = texture(u_velocity, v_texCoord - OFFSETX).y;
+    float vR = texture(u_velocity, v_texCoord + OFFSETX).y;
+    float vB = texture(u_velocity, v_texCoord - OFFSETY).x;
+    float vT = texture(u_velocity, v_texCoord + OFFSETY).x;
+
+    // Compute curl: ∂v/∂x - ∂u/∂y
+    float curl = 0.5 * ((vR - vL) - (vT - vB));
+
+    outColor = vec4(curl, 0.0, 0.0, 1.0);
+}
+`;
+
+/**
+ * Applies vorticity confinement to amplify rotational motion (swirls).
+ * Adds force perpendicular to curl gradient to counteract numerical dissipation.
+ * Essential for realistic turbulent flow behavior.
+ *
+ * Uniforms:
+ *   - u_velocity (sampler2D): Current velocity field
+ *   - u_curl (sampler2D): Curl field from CURL_SHADER
+ *   - u_texelSize (vec2): (1/width, 1/height)
+ *   - u_dt (float): Timestep
+ *   - u_epsilon (float): Vorticity confinement strength (default: 3.0)
+ */
+export const VORTICITY_SHADER = `#version 300 es
+precision highp float;
+
+${SHADER_CONSTANTS}
+
+in vec2 v_texCoord;
+
+uniform sampler2D u_velocity;
+uniform sampler2D u_curl;
+uniform vec2 u_texelSize;
+uniform float u_dt;
+uniform float u_epsilon; // Confinement strength
+
+out vec4 outColor;
+
+void main() {
+    // Sample curl at neighbors
+    float cL = texture(u_curl, v_texCoord - OFFSETX).r;
+    float cR = texture(u_curl, v_texCoord + OFFSETX).r;
+    float cB = texture(u_curl, v_texCoord - OFFSETY).r;
+    float cT = texture(u_curl, v_texCoord + OFFSETY).r;
+    float cC = texture(u_curl, v_texCoord).r;
+
+    // Compute curl gradient (points toward higher vorticity)
+    vec2 force = 0.5 * vec2(abs(cR) - abs(cL), abs(cT) - abs(cB));
+
+    // Normalize and scale by curl magnitude
+    float magnitude = length(force) + 1e-6; // Avoid division by zero
+    force = (force / magnitude) * u_epsilon * cC;
+
+    // Apply perpendicular force: rotate gradient 90° and scale by timestep
     vec2 velocity = texture(u_velocity, v_texCoord).xy;
-    
-    // Solid cells have zero velocity
-    if (texture(u_obstacles, v_texCoord).r > 0.1) {
-        outColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-    
-    // Check neighbors for walls
-    float oLeft = texture(u_obstacles, v_texCoord - vec2(u_texelSize.x, 0.0)).r;
-    float oRight = texture(u_obstacles, v_texCoord + vec2(u_texelSize.x, 0.0)).r;
-    float oBottom = texture(u_obstacles, v_texCoord - vec2(0.0, u_texelSize.y)).r;
-    float oTop = texture(u_obstacles, v_texCoord + vec2(0.0, u_texelSize.y)).r;
-    
-    // Enforce No-Penetration:
-    // If wall is to the LEFT, we cannot have NEGATIVE x velocity. -> max(v.x, 0.0)
-    // If wall is to the RIGHT, we cannot have POSITIVE x velocity. -> min(v.x, 0.0)
-    
-    if (oLeft > 0.1) {
-        velocity.x = max(velocity.x, 0.0); 
-        velocity.y *= u_damping;
-    }
-    if (oRight > 0.1) {
-        velocity.x = min(velocity.x, 0.0);
-        velocity.y *= u_damping;
-    }
-    if (oBottom > 0.1) {
-        velocity.y = max(velocity.y, 0.0);
-        velocity.x *= u_damping;
-    }
-    if (oTop > 0.1) {
-        velocity.y = min(velocity.y, 0.0);
-        velocity.x *= u_damping;
-    }
-    
+    velocity += vec2(force.y, -force.x) * u_dt;
+
     outColor = vec4(velocity, 0.0, 1.0);
 }
 `;
 
-export const VORTICITY_SHADER = `#version 300 es
-    precision highp float;
+export const DRAW_OBSTACLES_SHADER = `#version 300 es
+precision highp float;
 
-    in vec2 v_texCoord;
+#define OBSTACLE_VALUE vec4(1.0, 0.0, 0.0, 1.0)
 
-    uniform sampler2D u_velocity;
-    uniform sampler2D u_curl;
-    uniform sampler2D u_obstacles;
-    uniform vec2 u_texelSize;
-    uniform float u_dt;
-    uniform float u_curlStrength;
+in vec2 v_texCoord;
 
-    out vec4 outColor;
+uniform sampler2D u_obstacles;
+uniform vec2 u_point; // Center of the obstacle in UV coordinates
+uniform float u_radius; // Radius of the circular obstacle
+uniform float u_aspectRatio;
 
-    void main() {
-        // Solid cells have zero velocity
-        if (texture(u_obstacles, v_texCoord).r > 0.1) {
-            outColor = vec4(0.0, 0.0, 0.0, 1.0);
-            return;
-        }
-        
-        // 1. Calculate Gradient of Curl Magnitude (The "slope" of the spin)
-        float L = abs(texture(u_curl, v_texCoord - vec2(u_texelSize.x, 0.0)).x);
-        float R = abs(texture(u_curl, v_texCoord + vec2(u_texelSize.x, 0.0)).x);
-        float B = abs(texture(u_curl, v_texCoord - vec2(0.0, u_texelSize.y)).x);
-        float T = abs(texture(u_curl, v_texCoord + vec2(0.0, u_texelSize.y)).x);
-        float C = texture(u_curl, v_texCoord).x; // The sign tells us spin direction
+out vec4 outColor;
 
-        vec2 gradient = vec2(R - L, T - B) * 0.5;
+void main() {
+    vec2 p = v_texCoord - u_point;
+    p.x *= u_aspectRatio;
+    float dist = length(p);
 
-        // 2. Normalize to get safe direction
-        float len = length(gradient);
-        if (len > 0.0001) {
-            gradient /= len;
-        }
-
-        // 3. Apply force Perpendicular to the gradient
-        vec2 forceDir = vec2(gradient.y, -gradient.x); 
-        
-        // 4. Integrate
-        vec2 velocity = texture(u_velocity, v_texCoord).xy;
-        vec2 newVelocity = velocity + forceDir * C * u_curlStrength * u_dt;
-
-        outColor = vec4(newVelocity, 0.0, 1.0);
+    // If within radius, set as obstacle
+    if (dist < u_radius) {
+        outColor = OBSTACLE_VALUE; // Mark as solid
+    } else {
+        outColor = texture(u_obstacles, v_texCoord); // Keep existing value
     }
+}
 `;

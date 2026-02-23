@@ -87,17 +87,19 @@ export class GPUResources {
 
   /**
    * Creates a framebuffer with an attached RGBA32F floating-point texture.
-   * Configures LINEAR filtering for hardware-accelerated bilinear interpolation
+   * Configures texture filtering (LINEAR for smooth interpolation or NEAREST for sharp edges)
    * and CLAMP_TO_EDGE wrapping for proper boundary handling.
    *
    * @param width - Texture width in pixels
    * @param height - Texture height in pixels
+   * @param filtering - Texture filtering mode: 'linear' for smooth interpolation (default), 'nearest' for sharp edges
    * @returns Object containing the framebuffer and its attached texture
    * @throws Error if framebuffer is incomplete or texture allocation fails
    */
   createFramebuffer(
     width: number,
-    height: number
+    height: number,
+    filtering: "linear" | "nearest" = "linear"
   ): { framebuffer: WebGLFramebuffer; texture: WebGLTexture } {
     const texture = this.gl.createTexture();
     if (!texture) {
@@ -105,15 +107,17 @@ export class GPUResources {
     }
     this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
 
+    const filterMode =
+      filtering === "nearest" ? this.gl.NEAREST : this.gl.LINEAR;
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
       this.gl.TEXTURE_MIN_FILTER,
-      this.gl.LINEAR
+      filterMode
     );
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
       this.gl.TEXTURE_MAG_FILTER,
-      this.gl.LINEAR
+      filterMode
     );
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
@@ -162,24 +166,50 @@ export class GPUResources {
   }
 
   /**
+   * Clears a framebuffer to its initial state (all zeros).
+   * Resets the framebuffer as if it was just created.
+   *
+   * @param framebuffer - The framebuffer object to clear
+   */
+  clearFramebuffer(framebuffer: {
+    framebuffer: WebGLFramebuffer;
+    texture: WebGLTexture;
+  }): void {
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, framebuffer.framebuffer);
+    this.gl.clearColor(0, 0, 0, 0);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+  }
+
+  /**
    * Creates a pair of framebuffers for ping-pong rendering.
    * Each framebuffer has an attached RGBA32F texture.
    * Used in iterative algorithms where the output of one pass becomes the input of the next.
    *
    * @param width - Texture width in pixels
    * @param height - Texture height in pixels
+   * @param filtering - Texture filtering mode: 'linear' for smooth interpolation (default), 'nearest' for sharp edges
    * @returns DoubleFramebuffer object with 'read' and 'write' framebuffers
    */
-  createDoubleFramebuffer(width: number, height: number): DoubleFramebuffer {
+  createDoubleFramebuffer(
+    width: number,
+    height: number,
+    filtering: "linear" | "nearest" = "linear"
+  ): DoubleFramebuffer {
     return {
-      read: this.createFramebuffer(width, height),
-      write: this.createFramebuffer(width, height),
+      read: this.createFramebuffer(width, height, filtering),
+      write: this.createFramebuffer(width, height, filtering),
       swap() {
         const temp = this.read;
         this.read = this.write;
         this.write = temp;
       },
     };
+  }
+
+  clearDoubleFramebuffer(doubleFBO: DoubleFramebuffer): void {
+    this.clearFramebuffer(doubleFBO.read);
+    this.clearFramebuffer(doubleFBO.write);
   }
 
   /**

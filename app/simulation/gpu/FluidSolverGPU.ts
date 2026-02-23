@@ -1,26 +1,17 @@
-import {
-  VERTEX_SHADER,
-  ADVECT_SHADER,
-  RENDER_SHADER,
-  SPLAT_SHADER,
-  DIVERGENCE_SHADER,
-  ITERATE_SHADER,
-  GRADIENT_SUBTRACT_SHADER,
-  CURL_SHADER,
-  VORTICITY_SHADER,
-  BOUNDARY_SHADER,
-} from "./shaders/fluidShaders";
 import { GPUResources, DoubleFramebuffer } from "./GPUResources";
+import { FluidShaders } from "./FluidShaders";
 
 export class FluidSolverGPU {
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
   private resources: GPUResources;
+  private shaders: FluidShaders;
   private quadVAO: WebGLVertexArrayObject;
 
-  // Simulation grid dimensions
+  // Simulation grid praameters
   width: number;
   height: number;
+  texelSize: { x: number; y: number };
 
   // Fluid state buffers
   velocity: DoubleFramebuffer;
@@ -28,35 +19,15 @@ export class FluidSolverGPU {
   divergence: { framebuffer: WebGLFramebuffer; texture: WebGLTexture };
   pressure: DoubleFramebuffer;
   curl: { framebuffer: WebGLFramebuffer; texture: WebGLTexture };
-  obstacles: { framebuffer: WebGLFramebuffer; texture: WebGLTexture };
+  obstacles: DoubleFramebuffer;
 
   // Boundary configuration
-  boundaryThickness: number = 10; // Wall thickness in pixels
+  boundaryThickness: number = 10; // Object boundary thickness in pixels
 
-  // Shader programs
-  advectProgram: WebGLProgram;
-  renderProgram: WebGLProgram;
-  splatProgram: WebGLProgram;
-  divergenceProgram: WebGLProgram;
-  iterateProgram: WebGLProgram;
-  gradientSubtractProgram: WebGLProgram;
-  curlProgram: WebGLProgram;
-  vorticityProgram: WebGLProgram;
-  boundaryProgram: WebGLProgram;
-
-  /**
-   * Initializes the GPU-accelerated fluid solver with WebGL2 context.
-   * Validates required extensions for floating-point textures and rendering.
-   *
-   * @param canvas - The HTMLCanvasElement to use for WebGL2 rendering
-   * @param width - Simulation grid width (default: 64)
-   * @param height - Simulation grid height (default: 64)
-   * @throws Error if WebGL2, EXT_color_buffer_float, or OES_texture_float_linear are not supported
-   */
   constructor(
     canvas: HTMLCanvasElement,
     width: number = 64,
-    height: number = 64
+    height: number = 64,
   ) {
     this.canvas = canvas;
     this.width = width;
@@ -85,192 +56,134 @@ export class FluidSolverGPU {
     this.divergence = this.resources.createFramebuffer(width, height);
     this.pressure = this.resources.createDoubleFramebuffer(width, height);
     this.curl = this.resources.createFramebuffer(width, height);
-    this.obstacles = this.resources.createFramebuffer(width, height);
-
-    // Configure Obstacles texture to be "Blocky" (NEAREST)
-    this.gl.bindTexture(this.gl.TEXTURE_2D, this.obstacles.texture);
-    this.gl.texParameteri(
-      this.gl.TEXTURE_2D,
-      this.gl.TEXTURE_MIN_FILTER,
-      this.gl.NEAREST
+    this.obstacles = this.resources.createDoubleFramebuffer(
+      width,
+      height,
+      "nearest",
     );
-    this.gl.texParameteri(
-      this.gl.TEXTURE_2D,
-      this.gl.TEXTURE_MAG_FILTER,
-      this.gl.NEAREST
-    );
-    this.gl.bindTexture(this.gl.TEXTURE_2D, null);
 
     this.quadVAO = this.resources.createFullScreenQuad();
+    this.shaders = new FluidShaders(this.resources);
 
-    this.advectProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      ADVECT_SHADER
-    );
-    this.renderProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      RENDER_SHADER
-    );
-    this.splatProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      SPLAT_SHADER
-    );
-    this.divergenceProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      DIVERGENCE_SHADER
-    );
-    this.iterateProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      ITERATE_SHADER
-    );
-    this.gradientSubtractProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      GRADIENT_SUBTRACT_SHADER
-    );
-    this.curlProgram = this.resources.createProgram(VERTEX_SHADER, CURL_SHADER);
-    this.vorticityProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      VORTICITY_SHADER
-    );
-    this.boundaryProgram = this.resources.createProgram(
-      VERTEX_SHADER,
-      BOUNDARY_SHADER
-    );
+    this.texelSize = { x: 1.0 / width, y: 1.0 / height };
   }
 
-  /**
-   * Performs semi-Lagrangian advection on a scalar or vector field.
-   * Implements the "stable fluids" advection step by tracing particles backwards in time
-   * and sampling their previous values using hardware bilinear interpolation.
-   *
-   * @param output - The field to advect (density or velocity)
-   * @param velocity - The velocity field used for backtracing
-   * @param dt - Time step size
-   */
-  advect(
-    output: DoubleFramebuffer,
+  private advect(
+    source: DoubleFramebuffer,
     velocity: DoubleFramebuffer,
     dt: number,
-    dissipation: number
   ) {
     const gl = this.gl;
 
     gl.viewport(0, 0, this.width, this.height);
-    gl.useProgram(this.advectProgram);
+    gl.useProgram(this.shaders.advectProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uDt = gl.getUniformLocation(this.advectProgram, "u_dt");
-    const uTexelSize = gl.getUniformLocation(this.advectProgram, "u_texelSize");
-    const uVelocity = gl.getUniformLocation(this.advectProgram, "u_velocity");
-    const uSource = gl.getUniformLocation(this.advectProgram, "u_source");
-    const uObstacles = gl.getUniformLocation(this.advectProgram, "u_obstacles");
-    const uDissipation = gl.getUniformLocation(
-      this.advectProgram,
-      "u_dissipation"
+    const uDt = gl.getUniformLocation(this.shaders.advectProgram, "u_dt");
+    const uTexelSize = gl.getUniformLocation(
+      this.shaders.advectProgram,
+      "u_texelSize",
+    );
+    const uVelocity = gl.getUniformLocation(
+      this.shaders.advectProgram,
+      "u_velocity",
+    );
+    const uSource = gl.getUniformLocation(
+      this.shaders.advectProgram,
+      "u_source",
+    );
+    const uObstacles = gl.getUniformLocation(
+      this.shaders.advectProgram,
+      "u_obstacles",
     );
 
     gl.uniform1f(uDt, dt);
-    gl.uniform2f(uTexelSize, 1.0 / this.width, 1.0 / this.height);
+    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
     gl.uniform1i(uVelocity, 0);
     gl.uniform1i(uSource, 1);
     gl.uniform1i(uObstacles, 2);
-    gl.uniform1f(uDissipation, dissipation);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
 
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, output.read.texture);
+    gl.bindTexture(gl.TEXTURE_2D, source.read.texture);
 
     gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, output.write.framebuffer);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, source.write.framebuffer);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    output.swap();
+    source.swap();
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  /**
-   * Renders the current density field to the screen.
-   * Binds the default framebuffer (screen) and uses the render shader to visualize
-   * the fluid's density texture as color output.
-   */
   render() {
     const gl = this.gl;
 
-    // 1. Bind default framebuffer (null = the screen)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
-    // 2. Clear the screen (optional but good practice)
+    // 2. Clear the screen
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    // 3. Use Render Program
-    gl.useProgram(this.renderProgram);
-
-    // 4. Bind Quad
+    gl.useProgram(this.shaders.renderProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    // 5. Bind Density Texture (Read Buffer)
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.density.read.texture);
 
-    const uTexture = gl.getUniformLocation(this.renderProgram, "u_texture");
+    const uTexture = gl.getUniformLocation(
+      this.shaders.renderProgram,
+      "u_texture",
+    );
     gl.uniform1i(uTexture, 0);
 
-    // 6. Draw
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  /**
-   * Adds a localized "splat" of color or velocity to a target field.
-   * Used for mouse interaction to inject dye (density) or force (velocity) into the simulation.
-   * Creates a smooth Gaussian-like distribution centered at the specified coordinates.
-   *
-   * @param target - The field to splat into (density or velocity)
-   * @param x - X coordinate in canvas pixel space
-   * @param y - Y coordinate in canvas pixel space
-   * @param dx - Red component for density, or X-velocity for velocity field
-   * @param dy - Green component for density, or Y-velocity for velocity field
-   * @param dz - Blue component for density, or unused (0) for velocity field
-   */
   splat(
     target: DoubleFramebuffer,
     x: number,
     y: number,
     dx: number,
     dy: number,
-    dz: number
+    dz: number,
   ) {
     const gl = this.gl;
+    const radius = 0.001;
 
     gl.viewport(0, 0, this.width, this.height);
-    gl.useProgram(this.splatProgram);
+    gl.useProgram(this.shaders.splatProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uTarget = gl.getUniformLocation(this.splatProgram, "u_target");
-    const uAspectRatio = gl.getUniformLocation(
-      this.splatProgram,
-      "u_aspectRatio"
+    const uTarget = gl.getUniformLocation(
+      this.shaders.splatProgram,
+      "u_target",
     );
-    const uPoint = gl.getUniformLocation(this.splatProgram, "u_point");
-    const uColor = gl.getUniformLocation(this.splatProgram, "u_color");
-    const uRadius = gl.getUniformLocation(this.splatProgram, "u_radius");
+    const uAspectRatio = gl.getUniformLocation(
+      this.shaders.splatProgram,
+      "u_aspectRatio",
+    );
+    const uPoint = gl.getUniformLocation(this.shaders.splatProgram, "u_point");
+    const uColor = gl.getUniformLocation(this.shaders.splatProgram, "u_color");
+    const uRadius = gl.getUniformLocation(
+      this.shaders.splatProgram,
+      "u_radius",
+    );
 
     gl.uniform1i(uTarget, 0);
     gl.uniform1f(uAspectRatio, this.width / this.height);
 
-    // Normalize coordinates to 0..1 (UV space)
-    // Note: We flip Y because WebGL texture coordinates (0,0) are bottom-left,
-    // but mouse coordinates (0,0) are top-left.
+    // Normalize coordinates to [0,1] range
+    // 1-(y) to flip Y axis (canvas vs texture coords)
     gl.uniform2f(uPoint, x / this.canvas.width, 1.0 - y / this.canvas.height);
 
     gl.uniform3f(uColor, dx, dy, dz);
-    gl.uniform1f(uRadius, 0.001); // Adjust this for splat size
+    gl.uniform1f(uRadius, radius); // Adjust this for splat size
 
     // Bind Read Buffer (the current state)
     gl.activeTexture(gl.TEXTURE0);
@@ -293,61 +206,95 @@ export class FluidSolverGPU {
    * Divergence measures how much the velocity field is "expanding" or "compressing" at each point.
    * A divergence-free field is incompressible (key property of fluids).
    */
-  private computeDivergence() {
+  private computeDivergence(freeSlip: boolean) {
     const gl = this.gl;
 
     gl.viewport(0, 0, this.width, this.height);
-    gl.useProgram(this.divergenceProgram);
+    gl.useProgram(this.shaders.divergenceProgram);
     gl.bindVertexArray(this.quadVAO);
 
     const uVelocity = gl.getUniformLocation(
-      this.divergenceProgram,
-      "u_velocity"
+      this.shaders.divergenceProgram,
+      "u_velocity",
     );
     const uObstacles = gl.getUniformLocation(
-      this.divergenceProgram,
-      "u_obstacles"
+      this.shaders.divergenceProgram,
+      "u_obstacles",
     );
     const uTexelSize = gl.getUniformLocation(
-      this.divergenceProgram,
-      "u_texelSize"
+      this.shaders.divergenceProgram,
+      "u_texelSize",
+    );
+    const uFreeSlip = gl.getUniformLocation(
+      this.shaders.divergenceProgram,
+      "u_freeSlip",
     );
 
     gl.uniform1i(uVelocity, 0);
     gl.uniform1i(uObstacles, 1);
-    gl.uniform2f(uTexelSize, 1.0 / this.width, 1.0 / this.height);
+    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
+    gl.uniform1i(uFreeSlip, freeSlip ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
 
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.divergence.framebuffer);
-
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  iterate(x: DoubleFramebuffer, b: WebGLTexture, alpha: number, beta: number) {
+  private iterate(
+    x: DoubleFramebuffer,
+    b: WebGLTexture,
+    alpha: number,
+    beta: number,
+    isPressure: boolean,
+    freeSlip: boolean,
+  ) {
     const gl = this.gl;
-    gl.useProgram(this.iterateProgram);
+    gl.useProgram(this.shaders.iterateProgram);
     gl.viewport(0, 0, this.width, this.height);
     gl.bindVertexArray(this.quadVAO);
 
-    // Uniforms
-    gl.uniform1f(gl.getUniformLocation(this.iterateProgram, "u_alpha"), alpha);
-    gl.uniform1f(gl.getUniformLocation(this.iterateProgram, "u_beta"), beta);
-    gl.uniform2f(
-      gl.getUniformLocation(this.iterateProgram, "u_texelSize"),
-      1.0 / this.width,
-      1.0 / this.height
+    const uX = gl.getUniformLocation(this.shaders.iterateProgram, "u_x");
+    const uB = gl.getUniformLocation(this.shaders.iterateProgram, "u_b");
+    const uObstacles = gl.getUniformLocation(
+      this.shaders.iterateProgram,
+      "u_obstacles",
     );
 
-    gl.uniform1i(gl.getUniformLocation(this.iterateProgram, "u_x"), 0);
-    gl.uniform1i(gl.getUniformLocation(this.iterateProgram, "u_b"), 1);
-    gl.uniform1i(gl.getUniformLocation(this.iterateProgram, "u_obstacles"), 2);
+    const uTexelSize = gl.getUniformLocation(
+      this.shaders.iterateProgram,
+      "u_texelSize",
+    );
+    const uAlpha = gl.getUniformLocation(
+      this.shaders.iterateProgram,
+      "u_alpha",
+    );
+    const uBeta = gl.getUniformLocation(this.shaders.iterateProgram, "u_beta");
+    const uIsPressure = gl.getUniformLocation(
+      this.shaders.iterateProgram,
+      "u_isPressure",
+    );
+    const uFreeSlip = gl.getUniformLocation(
+      this.shaders.iterateProgram,
+      "u_freeSlip",
+    );
+
+    // Uniforms
+    gl.uniform1f(uAlpha, alpha);
+    gl.uniform1f(uBeta, beta);
+    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
+    gl.uniform1i(uIsPressure, isPressure ? 1 : 0);
+    gl.uniform1i(uFreeSlip, freeSlip ? 1 : 0);
+
+    gl.uniform1i(uX, 0);
+    gl.uniform1i(uB, 1);
+    gl.uniform1i(uObstacles, 2);
 
     // Textures
     gl.activeTexture(gl.TEXTURE0);
@@ -357,7 +304,7 @@ export class FluidSolverGPU {
     gl.bindTexture(gl.TEXTURE_2D, b); // b (Source)
 
     gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.texture); // Obstacles
+    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture); // Obstacles
 
     // Draw
     gl.bindFramebuffer(gl.FRAMEBUFFER, x.write.framebuffer);
@@ -375,30 +322,30 @@ export class FluidSolverGPU {
     const gl = this.gl;
 
     gl.viewport(0, 0, this.width, this.height);
-    gl.useProgram(this.gradientSubtractProgram);
+    gl.useProgram(this.shaders.gradientSubtractProgram);
     gl.bindVertexArray(this.quadVAO);
 
     const uVelocity = gl.getUniformLocation(
-      this.gradientSubtractProgram,
-      "u_velocity"
+      this.shaders.gradientSubtractProgram,
+      "u_velocity",
     );
     const uPressure = gl.getUniformLocation(
-      this.gradientSubtractProgram,
-      "u_pressure"
+      this.shaders.gradientSubtractProgram,
+      "u_pressure",
     );
     const uObstacles = gl.getUniformLocation(
-      this.gradientSubtractProgram,
-      "u_obstacles"
+      this.shaders.gradientSubtractProgram,
+      "u_obstacles",
     );
     const uTexelSize = gl.getUniformLocation(
-      this.gradientSubtractProgram,
-      "u_texelSize"
+      this.shaders.gradientSubtractProgram,
+      "u_texelSize",
     );
 
     gl.uniform1i(uVelocity, 0);
     gl.uniform1i(uPressure, 1);
     gl.uniform1i(uObstacles, 2);
-    gl.uniform2f(uTexelSize, 1.0 / this.width, 1.0 / this.height);
+    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
@@ -407,7 +354,7 @@ export class FluidSolverGPU {
     gl.bindTexture(gl.TEXTURE_2D, this.pressure.read.texture);
 
     gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.velocity.write.framebuffer);
 
@@ -429,149 +376,116 @@ export class FluidSolverGPU {
    *
    * @param iterations - Number of Jacobi iterations (default: 20, matching CPU version)
    */
-  project(iterations: number = 20) {
+  project(iterations: number = 20, freeSlip: boolean) {
     // Step 1: Compute divergence
-    this.computeDivergence();
+    this.computeDivergence(freeSlip);
 
     // 2. Solve Pressure (Poisson)
-    // Laplacian(p) = Div
-    // Eq: 4*p - neighbors = -div  ->  p = (neighbors - div) / 4
-    // alpha = -1.0, beta = 4.0
-
     // Clear initial pressure guess to 0
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pressure.read.framebuffer);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
+    const alpha = 1.0;
+    const beta = 4.0;
+
     for (let i = 0; i < iterations; i++) {
-      // Iterate: p_new = (neighbors + (-1 * div)) / 4
-      this.iterate(this.pressure, this.divergence.texture, -1.0, 4.0);
+      this.iterate(
+        this.pressure,
+        this.divergence.texture,
+        alpha,
+        beta,
+        true,
+        freeSlip,
+      );
     }
 
     // 3. Subtract Gradient
     this.subtractPressureGradient();
   }
 
-  computeCurl(
-    velocity: DoubleFramebuffer,
-    curl: { framebuffer: WebGLFramebuffer; texture: WebGLTexture }
-  ) {
-    const gl = this.gl!;
+  /**
+   * Computes the curl (vorticity) field from the velocity field.
+   * Curl measures rotation: positive = counterclockwise, negative = clockwise.
+   * Stores result in this.curl for use by applyVorticity().
+   */
+  private computeCurl() {
+    const gl = this.gl;
 
     gl.viewport(0, 0, this.width, this.height);
-    gl.useProgram(this.curlProgram);
-    gl.bindVertexArray(this.quadVAO);
-
-    const uVelocity = gl.getUniformLocation(this.curlProgram, "u_velocity");
-    const uTexelSize = gl.getUniformLocation(this.curlProgram, "u_texelSize");
-
-    gl.uniform2f(uTexelSize, 1.0 / this.width, 1.0 / this.height);
-    gl.uniform1i(uVelocity, 0);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, curl.framebuffer);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  }
-
-  applyVorticity(
-    velocity: DoubleFramebuffer,
-    curl: { framebuffer: WebGLFramebuffer; texture: WebGLTexture },
-    dt: number
-  ) {
-    const gl = this.gl!;
-
-    gl.viewport(0, 0, this.width, this.height);
-    gl.useProgram(this.vorticityProgram);
+    gl.useProgram(this.shaders.curlProgram);
     gl.bindVertexArray(this.quadVAO);
 
     const uVelocity = gl.getUniformLocation(
-      this.vorticityProgram,
-      "u_velocity"
-    );
-    const uCurl = gl.getUniformLocation(this.vorticityProgram, "u_curl");
-    const uObstacles = gl.getUniformLocation(
-      this.vorticityProgram,
-      "u_obstacles"
+      this.shaders.curlProgram,
+      "u_velocity",
     );
     const uTexelSize = gl.getUniformLocation(
-      this.vorticityProgram,
-      "u_texelSize"
+      this.shaders.curlProgram,
+      "u_texelSize",
     );
-    const uDt = gl.getUniformLocation(this.vorticityProgram, "u_dt");
-    const uCurlStrength = gl.getUniformLocation(
-      this.vorticityProgram,
-      "u_curlStrength"
-    );
-
-    gl.uniform2f(uTexelSize, 1.0 / this.width, 1.0 / this.height);
-    gl.uniform1f(uDt, dt);
-    gl.uniform1f(uCurlStrength, 3.0);
 
     gl.uniform1i(uVelocity, 0);
-    gl.uniform1i(uCurl, 1);
-    gl.uniform1i(uObstacles, 2);
+    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
 
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
 
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, curl.texture);
-
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.texture);
-
-    // Write back into velocity
-    gl.bindFramebuffer(gl.FRAMEBUFFER, velocity.write.framebuffer);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.curl.framebuffer);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    velocity.swap();
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
   /**
-   * Enforces velocity boundary conditions at walls.
-   * Implements free-slip: normal velocity = 0 at walls, slight damping on tangential.
-   * Should be called after any velocity modification (advection, forces, vorticity).
+   * Applies vorticity confinement to amplify rotational motion.
+   * Adds force perpendicular to curl gradient to restore turbulence lost to numerical dissipation.
    *
-   * @param damping - Friction coefficient near walls (default: 0.98 = 2% energy loss)
+   * @param dt - Timestep
+   * @param epsilon - Confinement strength (default: 20.0, higher = more swirls)
    */
-  enforceBoundaries(damping: number = 0.98) {
+  private applyVorticity(dt: number, epsilon: number = 20.0) {
     const gl = this.gl;
 
     gl.viewport(0, 0, this.width, this.height);
-    gl.useProgram(this.boundaryProgram);
+    gl.useProgram(this.shaders.vorticityProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uVelocity = gl.getUniformLocation(this.boundaryProgram, "u_velocity");
-    const uObstacles = gl.getUniformLocation(
-      this.boundaryProgram,
-      "u_obstacles"
+    const uVelocity = gl.getUniformLocation(
+      this.shaders.vorticityProgram,
+      "u_velocity",
+    );
+    const uCurl = gl.getUniformLocation(
+      this.shaders.vorticityProgram,
+      "u_curl",
     );
     const uTexelSize = gl.getUniformLocation(
-      this.boundaryProgram,
-      "u_texelSize"
+      this.shaders.vorticityProgram,
+      "u_texelSize",
     );
-    const uDamping = gl.getUniformLocation(this.boundaryProgram, "u_damping");
+    const uDt = gl.getUniformLocation(this.shaders.vorticityProgram, "u_dt");
+    const uEpsilon = gl.getUniformLocation(
+      this.shaders.vorticityProgram,
+      "u_epsilon",
+    );
 
     gl.uniform1i(uVelocity, 0);
-    gl.uniform1i(uObstacles, 1);
-    gl.uniform2f(uTexelSize, 1.0 / this.width, 1.0 / this.height);
-    gl.uniform1f(uDamping, damping);
+    gl.uniform1i(uCurl, 1);
+    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
+    gl.uniform1f(uDt, dt);
+    gl.uniform1f(uEpsilon, epsilon);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
 
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.curl.texture);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.velocity.write.framebuffer);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     this.velocity.swap();
-
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
@@ -587,12 +501,12 @@ export class FluidSolverGPU {
     top: boolean,
     bottom: boolean,
     left: boolean,
-    right: boolean
+    right: boolean,
   ) {
     const gl = this.gl;
 
-    // 1. Bind Obstacle FBO
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.obstacles.framebuffer);
+    // 1. Bind Obstacle Write FBO
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.obstacles.write.framebuffer);
     gl.viewport(0, 0, this.width, this.height);
 
     // 2. Clear everything to "Empty" (0.0) first
@@ -631,38 +545,178 @@ export class FluidSolverGPU {
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
 
-    // 4. Cleanup
+    // 4. Cleanup and swap buffers
     gl.disable(gl.SCISSOR_TEST);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.obstacles.swap();
   }
 
-  step(dt: number) {
-    // 1. Add Forces - handled externally via splat()
+  /**
+   * Draws a circular obstacle at the specified position using scissor test optimization.
+   * Only renders pixels within the circle's bounding box for maximum efficiency.
+   *
+   * @param x - X coordinate in canvas pixels
+   * @param y - Y coordinate in canvas pixels
+   * @param radius - Circle radius in UV space [0,1] (default: 0.02)
+   */
+  drawObstacles(x: number, y: number, radius: number = 0.02) {
+    const gl = this.gl;
 
-    // 2. Advect Velocity
-    this.advect(this.velocity, this.velocity, dt, 1.0);
-    this.enforceBoundaries(0.99); // Enforce after advection
+    // Convert canvas coordinates to UV space [0,1]
+    // Flip Y-axis because canvas Y (top-left origin) ≠ texture Y (bottom-left origin)
+    const uvX = x / this.canvas.width;
+    const uvY = 1.0 - y / this.canvas.height;
 
-    // 3. Diffuse Vorticity
-    const viscosity = 0.001;
-    if (viscosity > 0) {
-      const alpha =
-        ((1.0 / this.width) * (1.0 / this.width)) / (viscosity * dt);
-      const beta = 4.0 + alpha;
+    // Calculate bounding box in pixel coordinates for scissor test
+    const radiusPixels = radius * this.width;
+    const centerX = uvX * this.width;
+    const centerY = uvY * this.height;
 
-      // Solve for diffusion 20 times
-      for (let i = 0; i < 20; i++) {
-        // Pass .read.texture explicitly
-        this.iterate(this.velocity, this.velocity.read.texture, alpha, beta);
-      }
-      this.enforceBoundaries(0.99); // Enforce after diffusion
+    const minX = Math.floor(Math.max(0, centerX - radiusPixels));
+    const minY = Math.floor(Math.max(0, centerY - radiusPixels));
+    const boxWidth = Math.ceil(Math.min(this.width - minX, radiusPixels * 2));
+    const boxHeight = Math.ceil(Math.min(this.height - minY, radiusPixels * 2));
+
+    // Setup WebGL state
+    gl.viewport(0, 0, this.width, this.height);
+    gl.useProgram(this.shaders.obstacleProgram);
+    gl.bindVertexArray(this.quadVAO);
+
+    // Set uniforms
+    const uObstacles = gl.getUniformLocation(
+      this.shaders.obstacleProgram,
+      "u_obstacles",
+    );
+    const uPoint = gl.getUniformLocation(
+      this.shaders.obstacleProgram,
+      "u_point",
+    );
+    const uRadius = gl.getUniformLocation(
+      this.shaders.obstacleProgram,
+      "u_radius",
+    );
+    const uAspectRatio = gl.getUniformLocation(
+      this.shaders.obstacleProgram,
+      "u_aspectRatio",
+    );
+
+    gl.uniform1i(uObstacles, 0);
+    gl.uniform2f(uPoint, uvX, uvY);
+    gl.uniform1f(uRadius, radius);
+    gl.uniform1f(uAspectRatio, this.width / this.height);
+    
+    // Bind obstacle READ texture (current state)
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture);
+
+    // Bind obstacle WRITE framebuffer as render target
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.obstacles.write.framebuffer);
+
+    // Enable scissor test to only render the bounding box
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(minX, minY, boxWidth, boxHeight);
+
+    // Draw (shader only runs for pixels in the scissor region)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Cleanup and swap buffers
+    gl.disable(gl.SCISSOR_TEST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.obstacles.swap();
+  }
+
+  /**
+   * Resets the simulation to its initial state.
+   * Clears all velocity, density, pressure, curl, and divergence fields.
+   */
+  reset() {
+    this.resources.clearDoubleFramebuffer(this.velocity);
+    this.resources.clearDoubleFramebuffer(this.density);
+    this.resources.clearDoubleFramebuffer(this.pressure);
+    this.resources.clearDoubleFramebuffer(this.obstacles);
+    this.resources.clearFramebuffer(this.divergence);
+    this.resources.clearFramebuffer(this.curl);
+  }
+
+  private diffuseVelocity(
+    dt: number,
+    iters: number,
+    viscosity: number,
+    freeSlip: boolean,
+  ) {
+    if (viscosity <= 0.0 || iters <= 0 || dt < 0.0) return;
+
+    const alpha = (viscosity * dt) / (this.texelSize.x * this.texelSize.x);
+    const beta = 1.0 + 4.0 * alpha;
+
+    // Solve for diffusion 50 times
+    for (let i = 0; i < iters; i++) {
+      this.iterate(
+        this.velocity,
+        this.velocity.read.texture,
+        alpha,
+        beta,
+        false,
+        freeSlip,
+      );
     }
+  }
 
-    // 4. Project (Mass Conservation)
-    this.project(50);
-    this.enforceBoundaries(0.99); // Enforce after projection
+  private diffuseDensity(dt: number, iters: number, diffusionRate: number) {
+    if (diffusionRate <= 0.0 || iters <= 0 || dt < 0.0) return;
 
-    // 5. Advect Density (Dye)
-    this.advect(this.density, this.velocity, dt, 0.999);
+    const alpha = (diffusionRate * dt) / (this.texelSize.x * this.texelSize.x);
+    const beta = 1.0 + 4.0 * alpha;
+
+    // Solve for diffusion 50 times
+    for (let i = 0; i < iters; i++) {
+      this.iterate(
+        this.density,
+        this.density.read.texture,
+        alpha,
+        beta,
+        false,
+        true,
+      );
+    }
+  }
+
+  /**
+   * Advances the fluid simulation by one timestep.
+   * Implements complete Stable Fluids algorithm with vorticity confinement.
+   *
+   * @param dt - Timestep (typically 1/60 for 60 FPS)
+   * @param freeSlip - Use free-slip boundary conditions
+   */
+  step(dt: number, freeSlip: boolean) {
+    // User-configurable parameters (recommended ranges):
+    const viscosity = 0.01; // Range: [0.0, 1.0] - Higher = thicker fluid (honey vs water)
+    const diffusionRate = 1e-6; // Range: [0.0, 0.02] - Higher = faster fade/decay
+    const iterations = 50; // Range: [10, 100] - Higher = more accurate (less dissipation)
+    const vorticityStrength = 0; // Range: [0.0, 50.0] - Higher = more swirls/turbulence
+
+    // === STEP 1: VORTICITY CONFINEMENT (CREATE SWIRLS) ===
+    // Compute curl and amplify rotational motion for turbulence
+    this.computeCurl();
+    this.applyVorticity(dt, vorticityStrength);
+
+    // === STEP 2: ADVECT VELOCITY ===
+    // Transport velocity through itself (momentum conservation)
+    this.advect(this.velocity, this.velocity, dt);
+
+    // === STEP 3: DIFFUSE VELOCITY ===
+    // Apply viscosity (usually very low for realistic fluids)
+    this.diffuseVelocity(dt, iterations, viscosity, freeSlip);
+
+    // === STEP 4: PROJECT (ENFORCE INCOMPRESSIBILITY) ===
+    this.project(iterations, freeSlip);
+
+    // === STEP 5: ADVECT DENSITY ===
+    // Transport dye through velocity field
+    this.advect(this.density, this.velocity, dt);
+
+    // === STEP 6: DENSITY DECAY ===
+    // Gradually fade density to prevent over-accumulation
+    // this.diffuseDensity(dt, iterations, diffusionRate);
   }
 }

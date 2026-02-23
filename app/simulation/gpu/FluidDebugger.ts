@@ -1,16 +1,29 @@
 import { FluidSolverGPU } from "./FluidSolverGPU";
-import { DEBUG_SHADER } from "./shaders/debuggerShaders";
+import {
+  DEBUG_SHADER,
+  VELOCITY_LINES_VERTEX_SHADER,
+  VELOCITY_LINES_FRAGMENT_SHADER,
+} from "./shaders/debuggerShaders";
 import { VERTEX_SHADER } from "./shaders/fluidShaders";
 
 export class FluidDebugger {
   private gl: WebGL2RenderingContext;
   private program: WebGLProgram;
+  private velocityLinesProgram: WebGLProgram;
   private quadVAO: WebGLVertexArrayObject;
+  private arrowVAO: WebGLVertexArrayObject;
+  private arrowVertexCount: number = 0;
 
-  constructor(gl: WebGL2RenderingContext) {
+  constructor(gl: WebGL2RenderingContext, gridSpacing: number = 20) {
     this.gl = gl;
     this.program = this.createProgram(gl, VERTEX_SHADER, DEBUG_SHADER);
+    this.velocityLinesProgram = this.createProgram(
+      gl,
+      VELOCITY_LINES_VERTEX_SHADER,
+      VELOCITY_LINES_FRAGMENT_SHADER,
+    );
     this.quadVAO = this.createQuad(gl);
+    this.arrowVAO = this.createArrowGrid(gl, gridSpacing);
   }
 
   /**
@@ -18,7 +31,7 @@ export class FluidDebugger {
    */
   render(
     solver: FluidSolverGPU,
-    mode: "divergence" | "pressure" | "velocity" | "obstacles"
+    mode: "divergence" | "pressure" | "velocity" | "obstacles",
   ) {
     const gl = this.gl;
 
@@ -28,6 +41,13 @@ export class FluidDebugger {
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
+    // Special rendering for velocity arrows
+    if (mode === "velocity") {
+      this.renderVelocityArrows(solver);
+      return;
+    }
+
+    // Standard texture visualization for other modes
     gl.useProgram(this.program);
     gl.bindVertexArray(this.quadVAO);
 
@@ -46,7 +66,7 @@ export class FluidDebugger {
         // - Good simulation: divergence ≈ 0.0001 - 0.01 (needs 10-100x amplification)
         // - Bad simulation: divergence > 0.1 (shows as bright clouds even with low scale)
         // After pressure projection, divergence should be near-zero everywhere
-        scale = 100.0; // Amplify tiny errors for visibility
+        scale = 1.0; // Amplify tiny errors for visibility
         shaderMode = 0;
         break;
       case "pressure":
@@ -54,13 +74,8 @@ export class FluidDebugger {
         scale = 0.5; // Pressure gradients drive flow, usually small values
         shaderMode = 0;
         break;
-      case "velocity":
-        texture = solver.velocity.read.texture;
-        scale = 0.5; // Velocity typically [-1, 1] range
-        shaderMode = 1; // Vector mode
-        break;
       case "obstacles":
-        texture = solver.obstacles.texture;
+        texture = solver.obstacles.read.texture;
         scale = 1.0; // Binary: 1.0 = solid, 0.0 = fluid
         shaderMode = 0;
         break;
@@ -77,6 +92,66 @@ export class FluidDebugger {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     // Cleanup
+    gl.bindVertexArray(null);
+  }
+
+  /**
+   * Renders velocity field as a grid of arrows.
+   * Each arrow's length and color represent velocity magnitude and direction.
+   */
+  private renderVelocityArrows(solver: FluidSolverGPU) {
+    const gl = this.gl;
+
+    gl.useProgram(this.velocityLinesProgram);
+    gl.bindVertexArray(this.arrowVAO);
+
+    // Get uniform locations
+    const uVelocity = gl.getUniformLocation(
+      this.velocityLinesProgram,
+      "u_velocity",
+    );
+    const uTexelSize = gl.getUniformLocation(
+      this.velocityLinesProgram,
+      "u_texelSize",
+    );
+    const uMinLength = gl.getUniformLocation(
+      this.velocityLinesProgram,
+      "u_minLength",
+    );
+    const uMaxLength = gl.getUniformLocation(
+      this.velocityLinesProgram,
+      "u_maxLength",
+    );
+    const uVelocityScale = gl.getUniformLocation(
+      this.velocityLinesProgram,
+      "u_velocityScale",
+    );
+    const uKernelSize = gl.getUniformLocation(
+      this.velocityLinesProgram,
+      "u_kernelSize",
+    );
+
+    // Bind velocity texture
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, solver.velocity.read.texture);
+    gl.uniform1i(uVelocity, 0);
+
+    // Set shader parameters
+    gl.uniform2f(uTexelSize, 1.0 / solver.width, 1.0 / solver.height);
+    gl.uniform1f(uMinLength, 0.01); // 1.0% of screen
+    gl.uniform1f(uMaxLength, 0.10); // 10% of screen
+    gl.uniform1f(uVelocityScale, 0.8); // Adjust for visual appeal
+    gl.uniform1i(uKernelSize, 5); // 5×5 averaging kernel
+
+    // Enable line smoothing for better visual quality
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    // Draw arrows as lines
+    gl.drawArrays(gl.LINES, 0, this.arrowVertexCount);
+
+    // Cleanup
+    gl.disable(gl.BLEND);
     gl.bindVertexArray(null);
   }
 
@@ -133,11 +208,90 @@ export class FluidDebugger {
     gl.bufferData(
       gl.ARRAY_BUFFER,
       new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-      gl.STATIC_DRAW
+      gl.STATIC_DRAW,
     );
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
+    return vao;
+  }
+  /**
+   * Creates a grid mesh for velocity arrow visualization.
+   * Generates line pairs (base + tip) at regular grid intervals.
+   *
+   * @param gl WebGL2 context
+   * @param gridSpacing Spacing between arrows in pixels (e.g., 25)
+   * @returns VAO containing arrow geometry
+   */
+  private createArrowGrid(
+    gl: WebGL2RenderingContext,
+    gridSpacing: number,
+  ): WebGLVertexArrayObject {
+    const canvas = gl.canvas as HTMLCanvasElement;
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Calculate grid dimensions
+    const cols = Math.floor(width / gridSpacing);
+    const rows = Math.floor(height / gridSpacing);
+
+    // Each arrow = 2 vertices (base + tip), each vertex = 2 position coords + 1 isTip flag
+    const verticesPerArrow = 2;
+    const floatsPerVertex = 3; // x, y, isTip
+    const vertices: number[] = [];
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        // Calculate position in pixel space
+        const x = (col + 0.5) * gridSpacing;
+        const y = (row + 0.5) * gridSpacing;
+
+        // Convert to NDC space [-1, 1]
+        const ndcX = (x / width) * 2.0 - 1.0;
+        const ndcY = (y / height) * 2.0 - 1.0;
+
+        // Base vertex (isTip = 0.0)
+        vertices.push(ndcX, ndcY, 0.0);
+
+        // Tip vertex (isTip = 1.0) - starts at same position, shader will displace it
+        vertices.push(ndcX, ndcY, 1.0);
+      }
+    }
+
+    this.arrowVertexCount = vertices.length / floatsPerVertex;
+
+    // Create VAO and VBO
+    const vao = gl.createVertexArray()!;
+    const vbo = gl.createBuffer();
+
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+
+    // Setup vertex attributes
+    const stride = floatsPerVertex * Float32Array.BYTES_PER_ELEMENT;
+
+    // Attribute 0: a_position (vec2)
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0);
+
+    // Attribute 1: a_isTip (float)
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(
+      1,
+      1,
+      gl.FLOAT,
+      false,
+      stride,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+    );
+
+    gl.bindVertexArray(null);
+
+    console.log(
+      `Created arrow grid: ${cols}×${rows} = ${this.arrowVertexCount / 2} arrows`,
+    );
+
     return vao;
   }
 }

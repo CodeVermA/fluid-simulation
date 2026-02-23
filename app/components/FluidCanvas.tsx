@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { FluidSolver } from '../simulation/cpu/FluidSolver';
+import { InteractionMode } from '../types/interactionMode';
 
 // CONSTANTS
 const SCALE_FACTOR = 8;
@@ -13,6 +14,7 @@ const VELOCITY = { x: 0, y: 10 };
 interface Props {
   width: number;
   height: number;
+  interactionMode: InteractionMode;
 }
 
 interface GridCoordinates {
@@ -31,12 +33,31 @@ function getGridCoordinates(e: React.PointerEvent<HTMLCanvasElement>,): GridCoor
 }
 
 // COMPONENT
-export default function FluidCanvas({ width, height }: Props) {
+export default function FluidCanvas({ width, height, interactionMode }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null); // Canvas Element
   const solverRef = useRef<FluidSolver | null>(null); // Fluid Solver Instance
-  let animationId: number;
+  const interactionModeRef = useRef(interactionMode); // Mode ref to avoid re-init
 
-  // Animation Loop
+  // Update mode ref when prop changes (without triggering re-init)
+  useEffect(() => {
+    interactionModeRef.current = interactionMode;
+  }, [interactionMode]);
+
+  // Initialize Solver (only on mount or size change)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    console.log('Initializing CPU Fluid Solver...');
+    solverRef.current = new FluidSolver(width); // Assuming square grid for simplicity
+
+    return () => {
+      console.log('Cleaning up CPU Solver...');
+      solverRef.current = null;
+    };
+  }, [width, height]);
+
+  // Animation Loop (runs independently of mode changes)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -44,9 +65,7 @@ export default function FluidCanvas({ width, height }: Props) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    console.log('Initializing Fluid Simulation...');
-
-    solverRef.current = new FluidSolver(width); // Assuming square grid for simplicity
+    let animationId: number;
 
     const loop = () => {
       if (solverRef.current) {
@@ -63,28 +82,38 @@ export default function FluidCanvas({ width, height }: Props) {
         cancelAnimationFrame(animationId);
       }
     };
-  }, [width, height]);
+  }, []); // Empty deps: runs once, never re-initializes
 
   // Event Handlers
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!solverRef.current) return;
 
     const { x, y } = getGridCoordinates(e);
-    solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
-    solverRef.current.addVelocity(y, x, VELOCITY.x, VELOCITY.y);
 
-    console.log(`Added density at Grid: (${x}, ${y})`);
-  }, []);
+    if (interactionModeRef.current === 'simulate') {
+      solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
+      solverRef.current.addVelocity(y, x, VELOCITY.x, VELOCITY.y);
+      console.log(`Added density at Grid: (${x}, ${y})`);
+    } else if (interactionModeRef.current === 'draw-obstacles') {
+      // TODO: Add obstacle drawing support for CPU solver
+      console.log(`Draw obstacle at Grid: (${x}, ${y})`);
+    }
+  }, []); // No dependencies - reads from ref
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.buttons !== 1 || !solverRef.current) return; // Only respond to primary button drag
 
     const { x, y } = getGridCoordinates(e);
-    solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
-    solverRef.current.addVelocity(y, x, VELOCITY.x, VELOCITY.y);
 
-    console.log(`Added density at Grid: (${x}, ${y})`);
-  }, []);
+    if (interactionModeRef.current === 'simulate') {
+      solverRef.current.addDensity(y, x, DENSITY_AMOUNT);
+      solverRef.current.addVelocity(y, x, VELOCITY.x, VELOCITY.y);
+      console.log(`Added density at Grid: (${x}, ${y})`);
+    } else if (interactionModeRef.current === 'draw-obstacles') {
+      // TODO: Add obstacle drawing support for CPU solver
+      console.log(`Draw obstacle at Grid: (${x}, ${y})`);
+    }
+  }, []); // No dependencies - reads from ref
 
 
   // Render
