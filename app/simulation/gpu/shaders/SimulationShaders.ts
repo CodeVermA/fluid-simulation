@@ -42,9 +42,18 @@ precision highp float;
 
 in vec2 v_texCoord;
 uniform sampler2D u_texture;
+uniform sampler2D u_obstacles;
+uniform bool u_hideObstacles;
 out vec4 outColor;
 
 void main() {
+    float obstacle = texture(u_obstacles, v_texCoord).r;
+    if (obstacle > 0.5) {
+        vec3 obstacleColor = u_hideObstacles ? vec3(0.0) : vec3(1.0);
+        outColor = vec4(obstacleColor, 1.0);
+        return;
+    }
+
     vec4 color = texture(u_texture, v_texCoord);
     outColor = vec4(color.rgb, 1.0);
 }
@@ -421,33 +430,5 @@ void main() {
     velocity += vec2(force.y, -force.x) * u_dt;
 
     outColor = vec4(velocity, 0.0, 1.0);
-}
-`;
-
-export const DRAW_OBSTACLES_SHADER = `#version 300 es
-precision highp float;
-
-#define OBSTACLE_VALUE vec4(1.0, 0.0, 0.0, 1.0)
-
-in vec2 v_texCoord;
-
-uniform sampler2D u_obstacles;
-uniform vec2 u_point; // Center of the obstacle in UV coordinates
-uniform float u_radius; // Radius of the circular obstacle
-uniform float u_aspectRatio;
-
-out vec4 outColor;
-
-void main() {
-    vec2 p = v_texCoord - u_point;
-    p.x *= u_aspectRatio;
-    float dist = length(p);
-
-    // If within radius, set as obstacle
-    if (dist < u_radius) {
-        outColor = OBSTACLE_VALUE; // Mark as solid
-    } else {
-        outColor = texture(u_obstacles, v_texCoord); // Keep existing value
-    }
 }
 `;

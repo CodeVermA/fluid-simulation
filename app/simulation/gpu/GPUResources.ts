@@ -14,7 +14,8 @@ export interface DoubleFramebuffer {
 }
 
 export class GPUResources {
-  private gl: WebGL2RenderingContext;
+  readonly gl: WebGL2RenderingContext;
+  private _fullScreenQuad: WebGLVertexArrayObject | null = null;
 
   constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
@@ -56,15 +57,15 @@ export class GPUResources {
    */
   createProgram(
     vertexShaderSource: string,
-    fragmentShaderSource: string
+    fragmentShaderSource: string,
   ): WebGLProgram {
     const vertexShader = this.createShader(
       this.gl.VERTEX_SHADER,
-      vertexShaderSource
+      vertexShaderSource,
     );
     const fragmentShader = this.createShader(
       this.gl.FRAGMENT_SHADER,
-      fragmentShaderSource
+      fragmentShaderSource,
     );
 
     const program = this.gl.createProgram();
@@ -99,7 +100,7 @@ export class GPUResources {
   createFramebuffer(
     width: number,
     height: number,
-    filtering: "linear" | "nearest" = "linear"
+    filtering: "linear" | "nearest" = "linear",
   ): { framebuffer: WebGLFramebuffer; texture: WebGLTexture } {
     const texture = this.gl.createTexture();
     if (!texture) {
@@ -112,22 +113,22 @@ export class GPUResources {
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
       this.gl.TEXTURE_MIN_FILTER,
-      filterMode
+      filterMode,
     );
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
       this.gl.TEXTURE_MAG_FILTER,
-      filterMode
+      filterMode,
     );
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
       this.gl.TEXTURE_WRAP_S,
-      this.gl.CLAMP_TO_EDGE
+      this.gl.CLAMP_TO_EDGE,
     );
     this.gl.texParameteri(
       this.gl.TEXTURE_2D,
       this.gl.TEXTURE_WRAP_T,
-      this.gl.CLAMP_TO_EDGE
+      this.gl.CLAMP_TO_EDGE,
     );
 
     this.gl.texImage2D(
@@ -139,7 +140,7 @@ export class GPUResources {
       0,
       this.gl.RGBA,
       this.gl.FLOAT,
-      null
+      null,
     );
 
     const framebuffer = this.gl.createFramebuffer();
@@ -152,7 +153,7 @@ export class GPUResources {
       this.gl.COLOR_ATTACHMENT0,
       this.gl.TEXTURE_2D,
       texture,
-      0
+      0,
     );
 
     const status = this.gl.checkFramebufferStatus(this.gl.FRAMEBUFFER);
@@ -194,7 +195,7 @@ export class GPUResources {
   createDoubleFramebuffer(
     width: number,
     height: number,
-    filtering: "linear" | "nearest" = "linear"
+    filtering: "linear" | "nearest" = "linear",
   ): DoubleFramebuffer {
     return {
       read: this.createFramebuffer(width, height, filtering),
@@ -219,7 +220,8 @@ export class GPUResources {
    * @returns WebGLVertexArrayObject configured for full-screen rendering
    */
   createFullScreenQuad(): WebGLVertexArrayObject {
-    //
+    if (this._fullScreenQuad) return this._fullScreenQuad;
+
     const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
 
     const quadVAO = this.gl.createVertexArray();
@@ -241,11 +243,95 @@ export class GPUResources {
       this.gl.FLOAT,
       false,
       0,
-      0
+      0,
     );
 
     this.gl.bindVertexArray(null);
 
+    this._fullScreenQuad = quadVAO;
     return quadVAO;
+  }
+
+  /**
+   * Creates a grid mesh for velocity arrow visualization.
+   * Generates line pairs (base + tip) at regular grid intervals.
+   *
+   * @param gridSpacing Spacing between arrows in pixels (e.g., 25)
+   * @returns Object containing VAO and vertex count
+   */
+  public createArrowGrid(gridSpacing: number): {
+    vao: WebGLVertexArrayObject;
+    vertexCount: number;
+  } {
+    const canvas = this.gl.canvas as HTMLCanvasElement;
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Calculate grid dimensions
+    const cols = Math.floor(width / gridSpacing);
+    const rows = Math.floor(height / gridSpacing);
+
+    // Each arrow = 2 vertices (base + tip), each vertex = 2 position coords + 1 isTip flag
+    const verticesPerArrow = 2;
+    const floatsPerVertex = 3; // x, y, isTip
+    const vertices: number[] = [];
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        // Calculate position in pixel space
+        const x = (col + 0.5) * gridSpacing;
+        const y = (row + 0.5) * gridSpacing;
+
+        // Convert to NDC space [-1, 1]
+        const ndcX = (x / width) * 2.0 - 1.0;
+        const ndcY = (y / height) * 2.0 - 1.0;
+
+        // Base vertex (isTip = 0.0)
+        vertices.push(ndcX, ndcY, 0.0);
+
+        // Tip vertex (isTip = 1.0) - starts at same position, shader will displace it
+        vertices.push(ndcX, ndcY, 1.0);
+      }
+    }
+
+    const arrowVertexCount = vertices.length / floatsPerVertex;
+
+    // Create VAO and VBO
+    const vao = this.gl.createVertexArray()!;
+    const vbo = this.gl.createBuffer();
+
+    this.gl.bindVertexArray(vao);
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, vbo);
+    this.gl.bufferData(
+      this.gl.ARRAY_BUFFER,
+      new Float32Array(vertices),
+      this.gl.STATIC_DRAW,
+    );
+
+    // Setup vertex attributes
+    const stride = floatsPerVertex * Float32Array.BYTES_PER_ELEMENT;
+
+    // Attribute 0: a_position (vec2)
+    this.gl.enableVertexAttribArray(0);
+    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, stride, 0);
+
+    // Attribute 1: a_isTip (float)
+    this.gl.enableVertexAttribArray(1);
+    this.gl.vertexAttribPointer(
+      1,
+      1,
+      this.gl.FLOAT,
+      false,
+      stride,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+    );
+
+    this.gl.bindVertexArray(null);
+
+    console.log(
+      `Created arrow grid: ${cols}×${rows} = ${arrowVertexCount / 2} arrows`,
+    );
+
+    return { vao, vertexCount: arrowVertexCount };
   }
 }

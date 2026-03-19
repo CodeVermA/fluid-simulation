@@ -1,10 +1,10 @@
 import { GPUResources, DoubleFramebuffer } from "./GPUResources";
-import { FluidShaders } from "./FluidShaders";
+import { FluidShaders } from "./Shaders";
 
 export class FluidSolverGPU {
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
-  private resources: GPUResources;
+  readonly resources: GPUResources;
   private shaders: FluidShaders;
   private quadVAO: WebGLVertexArrayObject;
 
@@ -22,7 +22,7 @@ export class FluidSolverGPU {
   obstacles: DoubleFramebuffer;
 
   // Boundary configuration
-  boundaryThickness: number = 10; // Object boundary thickness in pixels
+  boundaryThickness: number = 5; // Object boundary thickness in pixels
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -39,13 +39,11 @@ export class FluidSolverGPU {
     }
     this.gl = gl;
 
-    const colorBuffer = gl.getExtension("EXT_color_buffer_float");
-    if (!colorBuffer) {
+    if (!gl.getExtension("EXT_color_buffer_float")) {
       throw new Error("EXT_color_buffer_float not supported");
     }
 
-    const floatLinear = gl.getExtension("OES_texture_float_linear");
-    if (!floatLinear) {
+    if (!gl.getExtension("OES_texture_float_linear")) {
       throw new Error("OES_texture_float_linear not supported");
     }
 
@@ -63,7 +61,7 @@ export class FluidSolverGPU {
     );
 
     this.quadVAO = this.resources.createFullScreenQuad();
-    this.shaders = new FluidShaders(this.resources);
+    this.shaders = new FluidShaders(this.resources, gl);
 
     this.texelSize = { x: 1.0 / width, y: 1.0 / height };
   }
@@ -79,29 +77,15 @@ export class FluidSolverGPU {
     gl.useProgram(this.shaders.advectProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uDt = gl.getUniformLocation(this.shaders.advectProgram, "u_dt");
-    const uTexelSize = gl.getUniformLocation(
-      this.shaders.advectProgram,
-      "u_texelSize",
+    gl.uniform1f(this.shaders.u.advect.dt, dt);
+    gl.uniform2f(
+      this.shaders.u.advect.texelSize,
+      this.texelSize.x,
+      this.texelSize.y,
     );
-    const uVelocity = gl.getUniformLocation(
-      this.shaders.advectProgram,
-      "u_velocity",
-    );
-    const uSource = gl.getUniformLocation(
-      this.shaders.advectProgram,
-      "u_source",
-    );
-    const uObstacles = gl.getUniformLocation(
-      this.shaders.advectProgram,
-      "u_obstacles",
-    );
-
-    gl.uniform1f(uDt, dt);
-    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
-    gl.uniform1i(uVelocity, 0);
-    gl.uniform1i(uSource, 1);
-    gl.uniform1i(uObstacles, 2);
+    gl.uniform1i(this.shaders.u.advect.velocity, 0);
+    gl.uniform1i(this.shaders.u.advect.source, 1);
+    gl.uniform1i(this.shaders.u.advect.obstacles, 2);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, velocity.read.texture);
@@ -120,7 +104,7 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  render() {
+  render(hideObstacles: boolean = true) {
     const gl = this.gl;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -136,11 +120,12 @@ export class FluidSolverGPU {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.density.read.texture);
 
-    const uTexture = gl.getUniformLocation(
-      this.shaders.renderProgram,
-      "u_texture",
-    );
-    gl.uniform1i(uTexture, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture);
+
+    gl.uniform1i(this.shaders.u.render.texture, 0);
+    gl.uniform1i(this.shaders.u.render.obstacles, 1);
+    gl.uniform1i(this.shaders.u.render.hideObstacles, hideObstacles ? 1 : 0);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -152,38 +137,27 @@ export class FluidSolverGPU {
     dx: number,
     dy: number,
     dz: number,
+    radius: number = 0.001,
   ) {
     const gl = this.gl;
-    const radius = 0.001;
 
     gl.viewport(0, 0, this.width, this.height);
     gl.useProgram(this.shaders.splatProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uTarget = gl.getUniformLocation(
-      this.shaders.splatProgram,
-      "u_target",
-    );
-    const uAspectRatio = gl.getUniformLocation(
-      this.shaders.splatProgram,
-      "u_aspectRatio",
-    );
-    const uPoint = gl.getUniformLocation(this.shaders.splatProgram, "u_point");
-    const uColor = gl.getUniformLocation(this.shaders.splatProgram, "u_color");
-    const uRadius = gl.getUniformLocation(
-      this.shaders.splatProgram,
-      "u_radius",
-    );
-
-    gl.uniform1i(uTarget, 0);
-    gl.uniform1f(uAspectRatio, this.width / this.height);
+    gl.uniform1i(this.shaders.u.splat.target, 0);
+    gl.uniform1f(this.shaders.u.splat.aspectRatio, this.width / this.height);
 
     // Normalize coordinates to [0,1] range
     // 1-(y) to flip Y axis (canvas vs texture coords)
-    gl.uniform2f(uPoint, x / this.canvas.width, 1.0 - y / this.canvas.height);
+    gl.uniform2f(
+      this.shaders.u.splat.point,
+      x / this.canvas.width,
+      1.0 - y / this.canvas.height,
+    );
 
-    gl.uniform3f(uColor, dx, dy, dz);
-    gl.uniform1f(uRadius, radius); // Adjust this for splat size
+    gl.uniform3f(this.shaders.u.splat.color, dx, dy, dz);
+    gl.uniform1f(this.shaders.u.splat.radius, radius); // Adjust this for splat size
 
     // Bind Read Buffer (the current state)
     gl.activeTexture(gl.TEXTURE0);
@@ -213,27 +187,14 @@ export class FluidSolverGPU {
     gl.useProgram(this.shaders.divergenceProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uVelocity = gl.getUniformLocation(
-      this.shaders.divergenceProgram,
-      "u_velocity",
+    gl.uniform1i(this.shaders.u.divergence.velocity, 0);
+    gl.uniform1i(this.shaders.u.divergence.obstacles, 1);
+    gl.uniform2f(
+      this.shaders.u.divergence.texelSize,
+      this.texelSize.x,
+      this.texelSize.y,
     );
-    const uObstacles = gl.getUniformLocation(
-      this.shaders.divergenceProgram,
-      "u_obstacles",
-    );
-    const uTexelSize = gl.getUniformLocation(
-      this.shaders.divergenceProgram,
-      "u_texelSize",
-    );
-    const uFreeSlip = gl.getUniformLocation(
-      this.shaders.divergenceProgram,
-      "u_freeSlip",
-    );
-
-    gl.uniform1i(uVelocity, 0);
-    gl.uniform1i(uObstacles, 1);
-    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
-    gl.uniform1i(uFreeSlip, freeSlip ? 1 : 0);
+    gl.uniform1i(this.shaders.u.divergence.freeSlip, freeSlip ? 1 : 0);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
@@ -260,41 +221,20 @@ export class FluidSolverGPU {
     gl.viewport(0, 0, this.width, this.height);
     gl.bindVertexArray(this.quadVAO);
 
-    const uX = gl.getUniformLocation(this.shaders.iterateProgram, "u_x");
-    const uB = gl.getUniformLocation(this.shaders.iterateProgram, "u_b");
-    const uObstacles = gl.getUniformLocation(
-      this.shaders.iterateProgram,
-      "u_obstacles",
+    // Uniforms (all cached — this method is called 40+ times per frame)
+    gl.uniform1f(this.shaders.u.iterate.alpha, alpha);
+    gl.uniform1f(this.shaders.u.iterate.beta, beta);
+    gl.uniform2f(
+      this.shaders.u.iterate.texelSize,
+      this.texelSize.x,
+      this.texelSize.y,
     );
+    gl.uniform1i(this.shaders.u.iterate.isPressure, isPressure ? 1 : 0);
+    gl.uniform1i(this.shaders.u.iterate.freeSlip, freeSlip ? 1 : 0);
 
-    const uTexelSize = gl.getUniformLocation(
-      this.shaders.iterateProgram,
-      "u_texelSize",
-    );
-    const uAlpha = gl.getUniformLocation(
-      this.shaders.iterateProgram,
-      "u_alpha",
-    );
-    const uBeta = gl.getUniformLocation(this.shaders.iterateProgram, "u_beta");
-    const uIsPressure = gl.getUniformLocation(
-      this.shaders.iterateProgram,
-      "u_isPressure",
-    );
-    const uFreeSlip = gl.getUniformLocation(
-      this.shaders.iterateProgram,
-      "u_freeSlip",
-    );
-
-    // Uniforms
-    gl.uniform1f(uAlpha, alpha);
-    gl.uniform1f(uBeta, beta);
-    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
-    gl.uniform1i(uIsPressure, isPressure ? 1 : 0);
-    gl.uniform1i(uFreeSlip, freeSlip ? 1 : 0);
-
-    gl.uniform1i(uX, 0);
-    gl.uniform1i(uB, 1);
-    gl.uniform1i(uObstacles, 2);
+    gl.uniform1i(this.shaders.u.iterate.x, 0);
+    gl.uniform1i(this.shaders.u.iterate.b, 1);
+    gl.uniform1i(this.shaders.u.iterate.obstacles, 2);
 
     // Textures
     gl.activeTexture(gl.TEXTURE0);
@@ -325,27 +265,14 @@ export class FluidSolverGPU {
     gl.useProgram(this.shaders.gradientSubtractProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uVelocity = gl.getUniformLocation(
-      this.shaders.gradientSubtractProgram,
-      "u_velocity",
+    gl.uniform1i(this.shaders.u.gradientSubtract.velocity, 0);
+    gl.uniform1i(this.shaders.u.gradientSubtract.pressure, 1);
+    gl.uniform1i(this.shaders.u.gradientSubtract.obstacles, 2);
+    gl.uniform2f(
+      this.shaders.u.gradientSubtract.texelSize,
+      this.texelSize.x,
+      this.texelSize.y,
     );
-    const uPressure = gl.getUniformLocation(
-      this.shaders.gradientSubtractProgram,
-      "u_pressure",
-    );
-    const uObstacles = gl.getUniformLocation(
-      this.shaders.gradientSubtractProgram,
-      "u_obstacles",
-    );
-    const uTexelSize = gl.getUniformLocation(
-      this.shaders.gradientSubtractProgram,
-      "u_texelSize",
-    );
-
-    gl.uniform1i(uVelocity, 0);
-    gl.uniform1i(uPressure, 1);
-    gl.uniform1i(uObstacles, 2);
-    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
@@ -417,17 +344,12 @@ export class FluidSolverGPU {
     gl.useProgram(this.shaders.curlProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uVelocity = gl.getUniformLocation(
-      this.shaders.curlProgram,
-      "u_velocity",
+    gl.uniform1i(this.shaders.u.curl.velocity, 0);
+    gl.uniform2f(
+      this.shaders.u.curl.texelSize,
+      this.texelSize.x,
+      this.texelSize.y,
     );
-    const uTexelSize = gl.getUniformLocation(
-      this.shaders.curlProgram,
-      "u_texelSize",
-    );
-
-    gl.uniform1i(uVelocity, 0);
-    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
@@ -452,29 +374,15 @@ export class FluidSolverGPU {
     gl.useProgram(this.shaders.vorticityProgram);
     gl.bindVertexArray(this.quadVAO);
 
-    const uVelocity = gl.getUniformLocation(
-      this.shaders.vorticityProgram,
-      "u_velocity",
+    gl.uniform1i(this.shaders.u.vorticity.velocity, 0);
+    gl.uniform1i(this.shaders.u.vorticity.curl, 1);
+    gl.uniform2f(
+      this.shaders.u.vorticity.texelSize,
+      this.texelSize.x,
+      this.texelSize.y,
     );
-    const uCurl = gl.getUniformLocation(
-      this.shaders.vorticityProgram,
-      "u_curl",
-    );
-    const uTexelSize = gl.getUniformLocation(
-      this.shaders.vorticityProgram,
-      "u_texelSize",
-    );
-    const uDt = gl.getUniformLocation(this.shaders.vorticityProgram, "u_dt");
-    const uEpsilon = gl.getUniformLocation(
-      this.shaders.vorticityProgram,
-      "u_epsilon",
-    );
-
-    gl.uniform1i(uVelocity, 0);
-    gl.uniform1i(uCurl, 1);
-    gl.uniform2f(uTexelSize, this.texelSize.x, this.texelSize.y);
-    gl.uniform1f(uDt, dt);
-    gl.uniform1f(uEpsilon, epsilon);
+    gl.uniform1f(this.shaders.u.vorticity.dt, dt);
+    gl.uniform1f(this.shaders.u.vorticity.epsilon, epsilon);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
@@ -583,28 +491,11 @@ export class FluidSolverGPU {
     gl.bindVertexArray(this.quadVAO);
 
     // Set uniforms
-    const uObstacles = gl.getUniformLocation(
-      this.shaders.obstacleProgram,
-      "u_obstacles",
-    );
-    const uPoint = gl.getUniformLocation(
-      this.shaders.obstacleProgram,
-      "u_point",
-    );
-    const uRadius = gl.getUniformLocation(
-      this.shaders.obstacleProgram,
-      "u_radius",
-    );
-    const uAspectRatio = gl.getUniformLocation(
-      this.shaders.obstacleProgram,
-      "u_aspectRatio",
-    );
+    gl.uniform1i(this.shaders.u.obstacle.obstacles, 0);
+    gl.uniform2f(this.shaders.u.obstacle.point, uvX, uvY);
+    gl.uniform1f(this.shaders.u.obstacle.radius, radius);
+    gl.uniform1f(this.shaders.u.obstacle.aspectRatio, this.width / this.height);
 
-    gl.uniform1i(uObstacles, 0);
-    gl.uniform2f(uPoint, uvX, uvY);
-    gl.uniform1f(uRadius, radius);
-    gl.uniform1f(uAspectRatio, this.width / this.height);
-    
     // Bind obstacle READ texture (current state)
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture);
@@ -687,14 +578,18 @@ export class FluidSolverGPU {
    *
    * @param dt - Timestep (typically 1/60 for 60 FPS)
    * @param freeSlip - Use free-slip boundary conditions
+   * @param viscosity - Fluid viscosity [0, 1]
+   * @param vorticityStrength - Vorticity confinement [0, 50]
+   * @param iterations - Jacobi iterations for diffusion & pressure [10, 40]
    */
-  step(dt: number, freeSlip: boolean) {
-    // User-configurable parameters (recommended ranges):
-    const viscosity = 0.01; // Range: [0.0, 1.0] - Higher = thicker fluid (honey vs water)
-    const diffusionRate = 1e-6; // Range: [0.0, 0.02] - Higher = faster fade/decay
-    const iterations = 50; // Range: [10, 100] - Higher = more accurate (less dissipation)
-    const vorticityStrength = 0; // Range: [0.0, 50.0] - Higher = more swirls/turbulence
-
+  step(
+    dt: number,
+    freeSlip: boolean,
+    viscosity: number = 0.0001,
+    vorticityStrength: number = 0,
+    iterations: number = 50,
+  ) {
+    const densityDiffusion = 15;
     // === STEP 1: VORTICITY CONFINEMENT (CREATE SWIRLS) ===
     // Compute curl and amplify rotational motion for turbulence
     this.computeCurl();
@@ -715,8 +610,8 @@ export class FluidSolverGPU {
     // Transport dye through velocity field
     this.advect(this.density, this.velocity, dt);
 
-    // === STEP 6: DENSITY DECAY ===
-    // Gradually fade density to prevent over-accumulation
-    // this.diffuseDensity(dt, iterations, diffusionRate);
+    // === STEP 6: DIFFUSE DENSITY ===
+    // Optional: Apply diffusion to dye for more natural look
+    this.diffuseDensity(dt, iterations, densityDiffusion);
   }
 }

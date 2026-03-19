@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { FluidSolver } from '../simulation/cpu/FluidSolver';
-import { InteractionMode } from '../types/interactionMode';
 
 // CONSTANTS
 const SCALE_FACTOR = 8;
@@ -14,7 +13,7 @@ const VELOCITY = { x: 0, y: 10 };
 interface Props {
   width: number;
   height: number;
-  interactionMode: InteractionMode;
+  interactionMode: string;
 }
 
 interface GridCoordinates {

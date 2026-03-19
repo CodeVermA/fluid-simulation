@@ -3,7 +3,6 @@
 import { useRef, useState } from 'react';
 import FluidCanvas from "../components/FluidCanvas";
 import Link from "next/link";
-import { InteractionMode, INTERACTION_MODES } from '../types/interactionMode';
 
 export default function CPUPage() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

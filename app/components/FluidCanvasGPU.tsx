@@ -2,20 +2,26 @@
 
 import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { FluidSolverGPU } from '../simulation/gpu/FluidSolverGPU';
-import { FluidDebugger } from '../simulation/gpu/FluidDebugger';
+import { FluidUtils } from '../simulation/gpu/FluidUtility';
 import { getColor } from '../utils/colorUtils';
-import { InteractionMode } from '../types/interactionMode';
 
-const FORCE_MULTIPLIER = 50.0;
 const FPS = 60;
+const MIN_SPLAT_RADIUS = 0.0001;
 
 interface FluidCanvasGPUProps {
   width: number;
   height: number;
-  debugMode: 'normal' | 'divergence' | 'velocity' | 'obstacles';
   boundaries: { top: boolean; bottom: boolean; left: boolean; right: boolean };
-  interactionMode: InteractionMode;
-  onMassUpdate?: (mass: number) => void;
+  interactionMode: string;
+  hideObstacles: boolean;
+  simulationParams: {
+    velocity: { x: number; y: number };
+    viscosity: number;
+    slipCondition: number;
+    penWidth: number;
+    vorticityStrength: number;
+    performance: number;
+  };
 }
 
 export interface FluidCanvasGPUHandle {
@@ -23,10 +29,15 @@ export interface FluidCanvasGPUHandle {
 }
 
 const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
-  ({ width, height, debugMode, boundaries, interactionMode, onMassUpdate }, ref) => {
+  ({ width, height, boundaries, interactionMode, hideObstacles, simulationParams }, ref) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const solverRef = useRef<FluidSolverGPU | null>(null);
-    const debuggerRef = useRef<FluidDebugger | null>(null);
+    const fluidUtilsRef = useRef<FluidUtils | null>(null);
+
+    // Refs to avoid stale closures in the animation loop
+    const interactionModeRef = useRef(interactionMode);
+    const hideObstaclesRef = useRef(hideObstacles);
+    const simulationParamsRef = useRef(simulationParams);
 
     // Interaction State
     const isMouseDown = useRef(false);
@@ -34,34 +45,32 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     const lastMousePos = useRef({ x: 0, y: 0 });
     const hasSplatted = useRef(false);
     const colour = useRef({ r: 1, g: 1, b: 1 });
-    const frameCount = useRef(0);
 
-    // Mode State Refs (to avoid re-initialization on mode change)
-    const debugModeRef = useRef(debugMode);
-    const interactionModeRef = useRef(interactionMode);
-
-    // Update Divergence | Velocity | Obstacles map
-    useEffect(() => {
-      debugModeRef.current = debugMode;
-    }, [debugMode]);
-
-    // Update Simulate | Draw-Obstacles mode
+    // Update interaction mode
     useEffect(() => {
       interactionModeRef.current = interactionMode;
     }, [interactionMode]);
+
+    useEffect(() => {
+      hideObstaclesRef.current = hideObstacles;
+    }, [hideObstacles]);
+
+    // Update simulation params
+    useEffect(() => {
+      simulationParamsRef.current = simulationParams;
+    }, [simulationParams]);
 
     // Expose reset method to parent
     useImperativeHandle(ref, () => ({
       reset: () => {
         if (solverRef.current) {
           solverRef.current.reset();
-          frameCount.current = 0;
-          onMassUpdate?.(0);
+          solverRef.current.updateBoundaries(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
         }
       }
     }));
 
-    // Initialize GPU Solver
+    // Initialize GPU Solver & Debugger
     useEffect(() => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -70,86 +79,88 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
 
       try {
         solverRef.current = new FluidSolverGPU(canvas, width, height);
-        solverRef.current.updateBoundaries(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
-        debuggerRef.current = new FluidDebugger(canvas.getContext('webgl2')!);
+        fluidUtilsRef.current = new FluidUtils(solverRef.current.resources);
       } catch (e) {
         console.error("GPU Solver failed to init:", e);
         return;
       }
 
+      solverRef.current.updateBoundaries(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
+
       return () => {
-        // Cleanup solver resources when component unmounts or size changes
         console.log('Cleaning up GPU Solver...');
         solverRef.current = null;
-        debuggerRef.current = null;
+        fluidUtilsRef.current = null;
       };
     }, [width, height]); // Only re-init on size change
 
-    // Main Animation Loop 
+    // Main Animation Loop
     useEffect(() => {
       let animationId: number;
 
       const loop = () => {
-        if (solverRef.current && debuggerRef.current) {
-          const solver = solverRef.current;
-          const debuggerTool = debuggerRef.current;
-          const dt = 1 / FPS; // Fixed timestep
+        const solver = solverRef.current;
+        const utils = fluidUtilsRef.current;
 
-          // Handle Mouse Interaction based on current mode (read from ref)
+        if (solver && utils) {
+          const dt = 1 / FPS;
+          const mode = interactionModeRef.current;
+          const params = simulationParamsRef.current;
+
+          const freeSlip = params.slipCondition === 0;
+          const viscosity = params.viscosity;
+          const vorticityStrength = params.vorticityStrength;
+          // Map performance 0–100% → 0-100 Jacobi iterations
+          const iterations = params.performance;
+          const splatRadius = MIN_SPLAT_RADIUS * params.penWidth;
+
+          // --- Mouse Interaction ---
           if (isMouseDown.current && !hasSplatted.current) {
-            const dx = (mousePos.current.x - lastMousePos.current.x) * FORCE_MULTIPLIER;
-            const dy = (mousePos.current.y - lastMousePos.current.y) * FORCE_MULTIPLIER;
-
-            // Only splat if there's actual movement
-            const moved = Math.abs(dx) > (0.1 * FORCE_MULTIPLIER) || Math.abs(dy) > (0.1 * FORCE_MULTIPLIER);
+            const dx = mousePos.current.x - lastMousePos.current.x;
+            const dy = mousePos.current.y - lastMousePos.current.y;
+            const moved = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
 
             if (moved) {
-              if (interactionModeRef.current === 'simulate') {
-                // Simulate mode: Add fluid velocity and density
-                // A. Deposit density (dye)
+              if (mode === 'af') {
+                // Mode 0: Normal simulation — add dye and velocity
                 solver.splat(
                   solver.density,
-                  mousePos.current.x,
-                  mousePos.current.y,
-                  colour.current.r, colour.current.g, colour.current.b
+                  mousePos.current.x, mousePos.current.y,
+                  colour.current.r, colour.current.g, colour.current.b,
+                  splatRadius,
                 );
-
-                // B. Add velocity impulse
                 solver.splat(
                   solver.velocity,
-                  mousePos.current.x,
-                  mousePos.current.y,
-                  dx, -dy, 0.0
+                  mousePos.current.x, mousePos.current.y,
+                  params.velocity.x, params.velocity.y, 0.0,
+                  splatRadius,
                 );
-              } else if (interactionModeRef.current === 'draw-obstacles') {
-                // Draw obstacles mode: Paint obstacles at cursor position
+              } else if (mode === 'ob') {
+                // Mode 2: Draw Obstacles
                 solver.drawObstacles(
-                  mousePos.current.x,
-                  mousePos.current.y,
-                  0.005 // Brush radius
+                  mousePos.current.x, mousePos.current.y,
+                  0.005 + (params.penWidth / 10) * 0.015,
                 );
               }
-
               hasSplatted.current = true;
             }
           }
           lastMousePos.current = { ...mousePos.current };
 
-          // Step Simulation
-          solver.step(dt, true);
+          // --- Step Simulation ---
+          solver.step(dt, freeSlip, viscosity, vorticityStrength, iterations);
 
-          // Render based on current debug mode (read from ref)
-          if (debugModeRef.current === 'normal') {
-            solver.render();
+          // --- Render based on interaction mode ---
+          if (mode === 'af' || mode === 'ob') {
+            solver.render(hideObstaclesRef.current);
+          } else if (mode === 'df') {
+            // Mode 2: Velocity Vectors
+            utils.renderDivergence(solver);
+          } else if (mode === 'vv') {
+            // Mode 3: Divergence Field
+            utils.renderVelocityArrows(solver);
           } else {
-            debuggerTool.render(solver, debugModeRef.current);
-          }
-
-          // Update Mass Stats every 60 frames
-          frameCount.current++;
-          if (frameCount.current % 60 === 0 && onMassUpdate) {
-            const mass = debuggerTool.measureMass(solver);
-            onMassUpdate(mass);
+            solver.render(hideObstaclesRef.current); // Fallback
           }
         }
         animationId = requestAnimationFrame(loop);
@@ -158,7 +169,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
       loop();
 
       return () => cancelAnimationFrame(animationId);
-    }, []); // Empty deps: runs once, never re-initializes
+    }, []); // Empty deps: runs once, uses refs for mutable values
 
     // Update boundaries when changed
     useEffect(() => {
@@ -207,8 +218,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
         ref={canvasRef}
         width={width}
         height={height}
-        className={`border-2 border-gray-700 rounded-xl shadow-2xl bg-black w-full max-w-6xl hover:border-cyan-500/50 transition-colors duration-300 ${interactionMode === 'simulate' ? 'cursor-crosshair' : 'cursor-cell'
-          }`}
+        className="border-2 border-gray-700 rounded-xl shadow-2xl bg-black w-full max-w-6xl hover:border-cyan-500/50 transition-colors duration-300 cursor-crosshair"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
