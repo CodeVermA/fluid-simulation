@@ -4,6 +4,7 @@ import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { FluidSolverGPU } from '../simulation/gpu/FluidSolverGPU';
 import { FluidUtils } from '../simulation/gpu/FluidUtility';
 import { getColor } from '../utils/colorUtils';
+import { InteractionMode as InteractionModeEnum, type InteractionMode } from '../types/interactionMode';
 
 const FPS = 60;
 const MIN_SPLAT_RADIUS = 0.0001;
@@ -12,7 +13,7 @@ interface FluidCanvasGPUProps {
   width: number;
   height: number;
   boundaries: { top: boolean; bottom: boolean; left: boolean; right: boolean };
-  interactionMode: string;
+  interactionMode: InteractionMode;
   hideObstacles: boolean;
   simulationParams: {
     velocity: { x: number; y: number };
@@ -35,7 +36,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     const fluidUtilsRef = useRef<FluidUtils | null>(null);
 
     // Refs to avoid stale closures in the animation loop
-    const interactionModeRef = useRef(interactionMode);
+    const interactionModeRef = useRef<InteractionMode>(interactionMode);
     const hideObstaclesRef = useRef(hideObstacles);
     const simulationParamsRef = useRef(simulationParams);
 
@@ -65,7 +66,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
       reset: () => {
         if (solverRef.current) {
           solverRef.current.reset();
-          solverRef.current.updateBoundaries(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
+          solverRef.current.updateWalls(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
         }
       }
     }));
@@ -85,7 +86,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
         return;
       }
 
-      solverRef.current.updateBoundaries(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
+      solverRef.current.updateWalls(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
 
       return () => {
         console.log('Cleaning up GPU Solver...');
@@ -121,7 +122,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
             const moved = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
 
             if (moved) {
-              if (mode === 'af') {
+              if (mode === InteractionModeEnum.AddFluid) {
                 // Mode 0: Normal simulation — add dye and velocity
                 solver.splat(
                   solver.density,
@@ -135,11 +136,20 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
                   params.velocity.x, params.velocity.y, 0.0,
                   splatRadius,
                 );
-              } else if (mode === 'ob') {
+              } else if (mode === InteractionModeEnum.DrawObstacles) {
                 // Mode 2: Draw Obstacles
                 solver.drawObstacles(
                   mousePos.current.x, mousePos.current.y,
                   0.005 + (params.penWidth / 10) * 0.015,
+                );
+              }
+              else if (mode === InteractionModeEnum.AddHeat) {
+                // Mode 1: Add Heat (increases temperature, which creates buoyancy forces)
+                solver.splat(
+                  solver.temperature,
+                  mousePos.current.x, mousePos.current.y,
+                  1.0, 0.0, 0.0, // Red channel = temperature
+                  splatRadius,
                 );
               }
               hasSplatted.current = true;
@@ -151,16 +161,19 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
           solver.step(dt, freeSlip, viscosity, vorticityStrength, iterations);
 
           // --- Render based on interaction mode ---
-          if (mode === 'af' || mode === 'ob') {
-            solver.render(hideObstaclesRef.current);
-          } else if (mode === 'df') {
-            // Mode 2: Velocity Vectors
-            utils.renderDivergence(solver);
-          } else if (mode === 'vv') {
-            // Mode 3: Divergence Field
-            utils.renderVelocityArrows(solver);
-          } else {
-            solver.render(hideObstaclesRef.current); // Fallback
+          switch (mode) {
+            case InteractionModeEnum.DivergenceField: // Debug view: Divergence field
+              utils.renderDivergence(solver);
+              break;
+            case InteractionModeEnum.VelocityVectors: // Debug view: Velocity vectors
+              utils.renderVelocityArrows(solver);
+              break;
+            case InteractionModeEnum.AddFluid:
+            case InteractionModeEnum.AddHeat:
+            case InteractionModeEnum.DrawObstacles:
+            default: // Default simulation render
+              solver.render(hideObstaclesRef.current);
+              break;
           }
         }
         animationId = requestAnimationFrame(loop);
@@ -174,7 +187,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     // Update boundaries when changed
     useEffect(() => {
       if (solverRef.current) {
-        solverRef.current.updateBoundaries(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
+        solverRef.current.updateWalls(boundaries.top, boundaries.bottom, boundaries.left, boundaries.right);
       }
     }, [boundaries]);
 

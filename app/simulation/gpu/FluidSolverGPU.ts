@@ -2,6 +2,15 @@ import { GPUResources, DoubleFramebuffer } from "./GPUResources";
 import { FluidShaders } from "./Shaders";
 
 export class FluidSolverGPU {
+  // Boussinesq buoyancy parameters: f_y = -alpha * rho + beta * (T - T_amb)
+  private readonly buoyancyAlpha = 0.05;
+  private readonly buoyancyBeta = 1.25;
+  private readonly ambientTemperature = 0.0;
+
+  // Thermal transport parameters
+  private readonly temperatureDissipation = 0.995;
+  private readonly temperatureDiffusion = 0.0001;
+
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
   readonly resources: GPUResources;
@@ -19,6 +28,7 @@ export class FluidSolverGPU {
   divergence: { framebuffer: WebGLFramebuffer; texture: WebGLTexture };
   pressure: DoubleFramebuffer;
   curl: { framebuffer: WebGLFramebuffer; texture: WebGLTexture };
+  temperature: DoubleFramebuffer;
   obstacles: DoubleFramebuffer;
 
   // Boundary configuration
@@ -59,6 +69,7 @@ export class FluidSolverGPU {
       height,
       "nearest",
     );
+    this.temperature = this.resources.createDoubleFramebuffer(width, height);
 
     this.quadVAO = this.resources.createFullScreenQuad();
     this.shaders = new FluidShaders(this.resources, gl);
@@ -70,6 +81,7 @@ export class FluidSolverGPU {
     source: DoubleFramebuffer,
     velocity: DoubleFramebuffer,
     dt: number,
+    dissipation: number = 1.0,
   ) {
     const gl = this.gl;
 
@@ -78,6 +90,7 @@ export class FluidSolverGPU {
     gl.bindVertexArray(this.quadVAO);
 
     gl.uniform1f(this.shaders.u.advect.dt, dt);
+    gl.uniform1f(this.shaders.u.advect.dissipation, dissipation);
     gl.uniform2f(
       this.shaders.u.advect.texelSize,
       this.texelSize.x,
@@ -208,20 +221,36 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  private iterate(
+  /**
+   * Solves a linear system Ax = b using Jacobi iteration.
+   * Optimised to bind static WebGL state (programs, VAOs, uniforms) ONLY ONCE,
+   * significantly reducing CPU overhead during the ping-pong loop.
+   *
+   * @param x - The current solution estimate (DoubleFramebuffer to ping-pong)
+   * @param b - The right-hand side source texture (divergence or previous state)
+   * @param alpha - Stencil coefficient
+   * @param beta - Diagonal coefficient
+   * @param isPressure - TRUE for pressure projection, FALSE for diffusion
+   * @param freeSlip - TRUE for free-slip boundary conditions
+   * @param iterations - Number of Jacobi iterations to perform
+   */
+  private solveLinearSystem(
     x: DoubleFramebuffer,
-    b: WebGLTexture,
+    b: WebGLTexture | null,
     alpha: number,
     beta: number,
     isPressure: boolean,
     freeSlip: boolean,
+    iterations: number,
   ) {
     const gl = this.gl;
+
+    // 1. Setup static state ONCE
     gl.useProgram(this.shaders.iterateProgram);
     gl.viewport(0, 0, this.width, this.height);
     gl.bindVertexArray(this.quadVAO);
 
-    // Uniforms (all cached — this method is called 40+ times per frame)
+    // 2. Upload static uniforms ONCE
     gl.uniform1f(this.shaders.u.iterate.alpha, alpha);
     gl.uniform1f(this.shaders.u.iterate.beta, beta);
     gl.uniform2f(
@@ -232,24 +261,35 @@ export class FluidSolverGPU {
     gl.uniform1i(this.shaders.u.iterate.isPressure, isPressure ? 1 : 0);
     gl.uniform1i(this.shaders.u.iterate.freeSlip, freeSlip ? 1 : 0);
 
+    // 3. Map texture units
     gl.uniform1i(this.shaders.u.iterate.x, 0);
     gl.uniform1i(this.shaders.u.iterate.b, 1);
     gl.uniform1i(this.shaders.u.iterate.obstacles, 2);
 
-    // Textures
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, x.read.texture); // x (Guess)
-
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, b); // b (Source)
-
+    // 4. Bind the obstacle texture ONCE (it never changes during iterations)
     gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture); // Obstacles
+    gl.bindTexture(gl.TEXTURE_2D, this.obstacles.read.texture);
 
-    // Draw
-    gl.bindFramebuffer(gl.FRAMEBUFFER, x.write.framebuffer);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    x.swap();
+    // 5. The ping-pong loop
+    for (let i = 0; i < iterations; i++) {
+      // Bind current guess
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, x.read.texture);
+
+      // FIX: WebGL Feedback Loop Prevention
+      // If a separate source texture 'b' is provided (like divergence), use it.
+      // If null, we bind x.read.texture safely for each iteration to restore explicit blurring.
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, b ? b : x.read.texture);
+
+      // Render to write buffer
+      gl.bindFramebuffer(gl.FRAMEBUFFER, x.write.framebuffer);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      // Swap pointers
+      x.swap();
+    }
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
@@ -292,6 +332,44 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
+  private applyBuoyancy(
+    dt: number,
+    alpha: number,
+    beta: number,
+    ambientTemperature: number = 0.0,
+  ) {
+    const gl = this.gl;
+
+    gl.viewport(0, 0, this.width, this.height);
+    gl.useProgram(this.shaders.buoyancyProgram);
+    gl.bindVertexArray(this.quadVAO);
+
+    gl.uniform1i(this.shaders.u.buoyancy.velocity, 0);
+    gl.uniform1i(this.shaders.u.buoyancy.temperature, 1);
+    gl.uniform1i(this.shaders.u.buoyancy.density, 2);
+
+    gl.uniform1f(
+      this.shaders.u.buoyancy.ambientTemperature,
+      ambientTemperature,
+    );
+    gl.uniform1f(this.shaders.u.buoyancy.dt, dt);
+    gl.uniform1f(this.shaders.u.buoyancy.alpha, alpha);
+    gl.uniform1f(this.shaders.u.buoyancy.beta, beta);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.temperature.read.texture);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.density.read.texture);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.velocity.write.framebuffer);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    this.velocity.swap();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
   /**
    * Performs the projection step to make the velocity field divergence-free (incompressible).
    * This is the GPU equivalent of the project() method in the CPU FluidSolver.
@@ -317,16 +395,15 @@ export class FluidSolverGPU {
     const alpha = 1.0;
     const beta = 4.0;
 
-    for (let i = 0; i < iterations; i++) {
-      this.iterate(
-        this.pressure,
-        this.divergence.texture,
-        alpha,
-        beta,
-        true,
-        freeSlip,
-      );
-    }
+    this.solveLinearSystem(
+      this.pressure,
+      this.divergence.texture,
+      alpha,
+      beta,
+      true,
+      freeSlip,
+      iterations,
+    );
 
     // 3. Subtract Gradient
     this.subtractPressureGradient();
@@ -381,6 +458,7 @@ export class FluidSolverGPU {
       this.texelSize.x,
       this.texelSize.y,
     );
+
     gl.uniform1f(this.shaders.u.vorticity.dt, dt);
     gl.uniform1f(this.shaders.u.vorticity.epsilon, epsilon);
 
@@ -405,12 +483,7 @@ export class FluidSolverGPU {
    * @param left - Block the left edge
    * @param right - Block the right edge
    */
-  updateBoundaries(
-    top: boolean,
-    bottom: boolean,
-    left: boolean,
-    right: boolean,
-  ) {
+  updateWalls(top: boolean, bottom: boolean, left: boolean, right: boolean) {
     const gl = this.gl;
 
     // 1. Bind Obstacle Write FBO
@@ -460,8 +533,9 @@ export class FluidSolverGPU {
   }
 
   /**
-   * Draws a circular obstacle at the specified position using scissor test optimization.
-   * Only renders pixels within the circle's bounding box for maximum efficiency.
+   * Draws a circular obstacle at the specified position.
+   * Renders fullscreen; shader preserves existing obstacles outside the circle.
+   * No scissor test for maximum performance.
    *
    * @param x - X coordinate in canvas pixels
    * @param y - Y coordinate in canvas pixels
@@ -474,16 +548,6 @@ export class FluidSolverGPU {
     // Flip Y-axis because canvas Y (top-left origin) ≠ texture Y (bottom-left origin)
     const uvX = x / this.canvas.width;
     const uvY = 1.0 - y / this.canvas.height;
-
-    // Calculate bounding box in pixel coordinates for scissor test
-    const radiusPixels = radius * this.width;
-    const centerX = uvX * this.width;
-    const centerY = uvY * this.height;
-
-    const minX = Math.floor(Math.max(0, centerX - radiusPixels));
-    const minY = Math.floor(Math.max(0, centerY - radiusPixels));
-    const boxWidth = Math.ceil(Math.min(this.width - minX, radiusPixels * 2));
-    const boxHeight = Math.ceil(Math.min(this.height - minY, radiusPixels * 2));
 
     // Setup WebGL state
     gl.viewport(0, 0, this.width, this.height);
@@ -503,15 +567,10 @@ export class FluidSolverGPU {
     // Bind obstacle WRITE framebuffer as render target
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.obstacles.write.framebuffer);
 
-    // Enable scissor test to only render the bounding box
-    gl.enable(gl.SCISSOR_TEST);
-    gl.scissor(minX, minY, boxWidth, boxHeight);
-
-    // Draw (shader only runs for pixels in the scissor region)
+    // Draw fullscreen: shader writes obstacles inside radius, preserves existing outside
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     // Cleanup and swap buffers
-    gl.disable(gl.SCISSOR_TEST);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.obstacles.swap();
   }
@@ -527,49 +586,32 @@ export class FluidSolverGPU {
     this.resources.clearDoubleFramebuffer(this.obstacles);
     this.resources.clearFramebuffer(this.divergence);
     this.resources.clearFramebuffer(this.curl);
+    this.resources.clearDoubleFramebuffer(this.temperature);
   }
 
-  private diffuseVelocity(
+  /**
+   * Generic diffusion solver for both velocity and density.
+   * Applies viscous damping using Jacobi iteration.
+   *
+   * @param target - Target buffer (velocity or density)
+   * @param dt - Timestep
+   * @param iters - Number of Jacobi iterations
+   * @param diffusionRate - Diffusion coefficient (viscosity or density diffusion)
+   * @param freeSlip - Use free-slip boundary conditions (density always uses free-slip)
+   */
+  private diffuse(
+    target: DoubleFramebuffer,
     dt: number,
     iters: number,
-    viscosity: number,
+    diffusionRate: number,
     freeSlip: boolean,
   ) {
-    if (viscosity <= 0.0 || iters <= 0 || dt < 0.0) return;
-
-    const alpha = (viscosity * dt) / (this.texelSize.x * this.texelSize.x);
-    const beta = 1.0 + 4.0 * alpha;
-
-    // Solve for diffusion 50 times
-    for (let i = 0; i < iters; i++) {
-      this.iterate(
-        this.velocity,
-        this.velocity.read.texture,
-        alpha,
-        beta,
-        false,
-        freeSlip,
-      );
-    }
-  }
-
-  private diffuseDensity(dt: number, iters: number, diffusionRate: number) {
     if (diffusionRate <= 0.0 || iters <= 0 || dt < 0.0) return;
 
     const alpha = (diffusionRate * dt) / (this.texelSize.x * this.texelSize.x);
     const beta = 1.0 + 4.0 * alpha;
 
-    // Solve for diffusion 50 times
-    for (let i = 0; i < iters; i++) {
-      this.iterate(
-        this.density,
-        this.density.read.texture,
-        alpha,
-        beta,
-        false,
-        true,
-      );
-    }
+    this.solveLinearSystem(target, null, alpha, beta, false, freeSlip, iters);
   }
 
   /**
@@ -589,29 +631,46 @@ export class FluidSolverGPU {
     vorticityStrength: number = 0,
     iterations: number = 50,
   ) {
-    const densityDiffusion = 15;
-    // === STEP 1: VORTICITY CONFINEMENT (CREATE SWIRLS) ===
-    // Compute curl and amplify rotational motion for turbulence
+    const densityDiffusion = 0.00001;
+
+    // STEP 0: BUOYANCY (External Force)
+    this.applyBuoyancy(
+      dt,
+      this.buoyancyAlpha,
+      this.buoyancyBeta,
+      this.ambientTemperature,
+    );
+
+    //STEP 1: VORTICITY CONFINEMENT
     this.computeCurl();
     this.applyVorticity(dt, vorticityStrength);
 
-    // === STEP 2: ADVECT VELOCITY ===
-    // Transport velocity through itself (momentum conservation)
+    // STEP 2: ADVECT VELOCITY
     this.advect(this.velocity, this.velocity, dt);
 
-    // === STEP 3: DIFFUSE VELOCITY ===
-    // Apply viscosity (usually very low for realistic fluids)
-    this.diffuseVelocity(dt, iterations, viscosity, freeSlip);
+    // STEP 3: DIFFUSE VELOCITY
+    this.diffuse(this.velocity, dt, iterations, viscosity, freeSlip);
 
-    // === STEP 4: PROJECT (ENFORCE INCOMPRESSIBILITY) ===
+    // STEP 4: PROJECT (ENFORCE INCOMPRESSIBILITY)
     this.project(iterations, freeSlip);
 
-    // === STEP 5: ADVECT DENSITY ===
-    // Transport dye through velocity field
+    // STEP 5: ADVECT DENSITY AND HEAT
     this.advect(this.density, this.velocity, dt);
+    this.advect(
+      this.temperature,
+      this.velocity,
+      dt,
+      this.temperatureDissipation,
+    );
 
-    // === STEP 6: DIFFUSE DENSITY ===
-    // Optional: Apply diffusion to dye for more natural look
-    this.diffuseDensity(dt, iterations, densityDiffusion);
+    // STEP 6: DIFFUSE DENSITY AND HEAT
+    this.diffuse(this.density, dt, iterations, densityDiffusion, true);
+    this.diffuse(
+      this.temperature,
+      dt,
+      iterations / 2,
+      this.temperatureDiffusion,
+      true,
+    );
   }
 }

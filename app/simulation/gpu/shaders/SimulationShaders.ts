@@ -114,6 +114,8 @@ in vec2 v_texCoord;
 uniform sampler2D u_velocity;
 uniform sampler2D u_source; // velocity or density
 uniform sampler2D u_obstacles;
+
+uniform float u_dissipation; 
 uniform vec2 u_texelSize;
 uniform float u_dt;
 
@@ -140,7 +142,7 @@ void main() {
     if (texture(u_obstacles, prevPos).x > OBSTACLE_THRESHOLD) {
         outColor = ZERO; 
     } else {
-        outColor = texture(u_source, prevPos);
+        outColor = texture(u_source, prevPos) * u_dissipation;
     }
 }`;
 
@@ -386,14 +388,6 @@ void main() {
 /**
  * Applies vorticity confinement to amplify rotational motion (swirls).
  * Adds force perpendicular to curl gradient to counteract numerical dissipation.
- * Essential for realistic turbulent flow behavior.
- *
- * Uniforms:
- *   - u_velocity (sampler2D): Current velocity field
- *   - u_curl (sampler2D): Curl field from CURL_SHADER
- *   - u_texelSize (vec2): (1/width, 1/height)
- *   - u_dt (float): Timestep
- *   - u_epsilon (float): Vorticity confinement strength (default: 3.0)
  */
 export const VORTICITY_SHADER = `#version 300 es
 precision highp float;
@@ -406,29 +400,69 @@ uniform sampler2D u_velocity;
 uniform sampler2D u_curl;
 uniform vec2 u_texelSize;
 uniform float u_dt;
-uniform float u_epsilon; // Confinement strength
+uniform float u_epsilon; 
 
 out vec4 outColor;
 
 void main() {
-    // Sample curl at neighbors
+    // 1. Fetch curl values (texture() is heavily cached, but try to keep fetches grouped)
+    float cC = texture(u_curl, v_texCoord).r;
     float cL = texture(u_curl, v_texCoord - OFFSETX).r;
     float cR = texture(u_curl, v_texCoord + OFFSETX).r;
     float cB = texture(u_curl, v_texCoord - OFFSETY).r;
     float cT = texture(u_curl, v_texCoord + OFFSETY).r;
-    float cC = texture(u_curl, v_texCoord).r;
 
-    // Compute curl gradient (points toward higher vorticity)
-    vec2 force = 0.5 * vec2(abs(cR) - abs(cL), abs(cT) - abs(cB));
+    // 2. Compute the gradient of the curl magnitude (central difference)
+    vec2 force = vec2(abs(cR) - abs(cL), abs(cT) - abs(cB)) * 0.5;
 
-    // Normalize and scale by curl magnitude
-    float magnitude = length(force) + 1e-6; // Avoid division by zero
-    force = (force / magnitude) * u_epsilon * cC;
+    // 3. Robust normalisation (inversesqrt is often faster on GPUs than length + div)
+    float sqrMag = dot(force, force);
+    float invMag = inversesqrt(sqrMag + 1e-7); // 1e-7 prevents division by zero gracefully
 
-    // Apply perpendicular force: rotate gradient 90° and scale by timestep
+    // Calculate normalised N vector
+    vec2 N = force * invMag;
+
+    // 4. Compute final confinement force (N x omega)
+    // In 2D: (N.x, N.y) x (0, 0, omega) = (N.y * omega, -N.x * omega)
+    vec2 confinement = vec2(N.y, -N.x) * cC * u_epsilon;
+
+    // 5. Integrate into velocity
     vec2 velocity = texture(u_velocity, v_texCoord).xy;
-    velocity += vec2(force.y, -force.x) * u_dt;
+    outColor = vec4(velocity + confinement * u_dt, 0.0, 1.0);
+}
+`;
 
-    outColor = vec4(velocity, 0.0, 1.0);
+export const BUOYANCY_SHADER = `#version 300 es
+precision highp float;
+
+${SHADER_CONSTANTS}
+
+in vec2 v_texCoord;
+
+uniform sampler2D u_velocity;
+uniform sampler2D u_temperature;
+uniform sampler2D u_density;
+
+uniform float u_ambientTemperature;
+uniform float u_dt;
+uniform float u_alpha; // Weight of the dye
+uniform float u_beta;  // Buoyancy of the heat
+
+out vec4 outColor;
+
+void main() {
+    float T = texture(u_temperature, v_texCoord).r;
+    vec3 dye = texture(u_density, v_texCoord).rgb;
+    float D = dot(dye, vec3(0.3333333));
+    vec2 V = texture(u_velocity, v_texCoord).xy;
+
+    // f_buoy = (-alpha * D + beta * (T - T_amb)) * direction
+    // In our WebGL coordinate system, +Y is upwards.
+    float forceY = (-u_alpha * D) + (u_beta * (T - u_ambientTemperature));
+
+    // Integrate force into velocity
+    V.y += forceY * u_dt;
+
+    outColor = vec4(V, 0.0, 1.0);
 }
 `;

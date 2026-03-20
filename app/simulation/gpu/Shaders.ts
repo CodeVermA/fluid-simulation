@@ -8,6 +8,7 @@ import {
   GRADIENT_SUBTRACT_SHADER,
   CURL_SHADER,
   VORTICITY_SHADER,
+  BUOYANCY_SHADER,
 } from "./shaders/SimulationShaders";
 import {
   DRAW_OBSTACLES_SHADER,
@@ -39,6 +40,7 @@ function buildUniforms(gl: WebGL2RenderingContext, p: FluidShaders) {
       "velocity",
       "source",
       "obstacles",
+      "dissipation",
     ] as const),
     render: getUniforms(gl, p.renderProgram, [
       "texture",
@@ -88,6 +90,16 @@ function buildUniforms(gl: WebGL2RenderingContext, p: FluidShaders) {
       "radius",
       "aspectRatio",
     ] as const),
+
+    buoyancy: getUniforms(gl, p.buoyancyProgram, [
+      "velocity",
+      "temperature",
+      "density",
+      "ambientTemperature",
+      "dt",
+      "alpha",
+      "beta",
+    ] as const),
   };
 }
 
@@ -107,6 +119,7 @@ export class FluidShaders {
   gradientSubtractProgram!: WebGLProgram;
   curlProgram!: WebGLProgram;
   vorticityProgram!: WebGLProgram;
+  buoyancyProgram!: WebGLProgram;
 
   // Utility shaders
   obstacleProgram!: WebGLProgram;
@@ -149,6 +162,10 @@ export class FluidShaders {
     this.obstacleProgram = resources.createProgram(
       VERTEX_SHADER,
       DRAW_OBSTACLES_SHADER,
+    );
+    this.buoyancyProgram = resources.createProgram(
+      VERTEX_SHADER,
+      BUOYANCY_SHADER,
     );
   }
 

@@ -4,22 +4,19 @@ import { useRef, useState } from 'react';
 import FluidCanvasGPU, { FluidCanvasGPUHandle } from "../components/FluidCanvasGPU";
 import Link from "next/link";
 import { BackIcon, ClearIcon } from '../components/Icons';
+import {
+  INTERACTION_MODE_LIST,
+  InteractionMode as InteractionModeEnum,
+  type InteractionMode,
+} from '../types/interactionMode';
 
 const SCREEN_RESOLUTION = [845, 480];
-export const INTERACTION_MODES: Record<string, string> = {
-  'af': "Add Fluid",
-  'ah': "Add Heat",
-  'ob': "Draw Obstacles",
-  'vv': "Velocity Vectors",
-  'df': "Divergence Field",
-
-};
 
 export default function GPUPage() {
   const canvasRef = useRef<FluidCanvasGPUHandle>(null);
   const [boundaries, setBoundaries] = useState({ top: true, bottom: true, left: true, right: true });
   const [isMenuExpanded, setIsMenuExpanded] = useState(false);
-  const [interactionMode, setInteractionMode] = useState<string>('af');
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>(InteractionModeEnum.AddFluid);
   const [hideObstacles, setHideObstacles] = useState(true);
 
   // Simulation parameters
@@ -105,20 +102,20 @@ export default function GPUPage() {
           <div className="bg-gray-900/60 backdrop-blur-sm border border-gray-700 rounded-xl p-5 shadow-lg">
             <h3 className="text-base font-semibold text-cyan-400 mb-4">Interaction Mode</h3>
             <div className="space-y-2">
-              {Object.keys(INTERACTION_MODES).map((mode) => (
+              {INTERACTION_MODE_LIST.map(({ id, label }) => (
                 <button
-                  key={mode}
-                  onClick={() => setInteractionMode(mode)}
+                  key={id}
+                  onClick={() => setInteractionMode(id)}
                   className={`
                     w-full px-4 py-2.5 rounded-lg text-sm font-medium 
                     transition-all duration-200 ease-out
-                    ${interactionMode === mode
+                    ${interactionMode === id
                       ? 'bg-cyan-600 text-white shadow-md'
                       : 'bg-gray-800/50 text-gray-400 hover:text-gray-200 hover:bg-gray-800'
                     }
                   `}
                 >
-                  {INTERACTION_MODES[mode]}
+                  {label}
                 </button>
               ))}
             </div>
