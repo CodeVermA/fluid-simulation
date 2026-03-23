@@ -254,7 +254,7 @@ export class GPUResources {
 
   /**
    * Creates a grid mesh for velocity arrow visualization.
-   * Generates line pairs (base + tip) at regular grid intervals.
+   * Generates line segments for shaft + arrowhead at regular grid intervals.
    *
    * @param gridSpacing Spacing between arrows in pixels (e.g., 25)
    * @returns Object containing VAO and vertex count
@@ -271,8 +271,10 @@ export class GPUResources {
     const cols = Math.floor(width / gridSpacing);
     const rows = Math.floor(height / gridSpacing);
 
-    // Each arrow = 2 vertices (base + tip), each vertex = 2 position coords + 1 isTip flag
-    const verticesPerArrow = 2;
+    // Each arrow uses 3 line segments (shaft + 2 head wings) = 6 vertices.
+    // Attribute a_isTip encodes role:
+    // 0.0 = base, 1.0 = tip, 2.0 = head-left endpoint, 3.0 = head-right endpoint.
+    const verticesPerArrow = 6;
     const floatsPerVertex = 3; // x, y, isTip
     const vertices: number[] = [];
 
@@ -286,11 +288,17 @@ export class GPUResources {
         const ndcX = (x / width) * 2.0 - 1.0;
         const ndcY = (y / height) * 2.0 - 1.0;
 
-        // Base vertex (isTip = 0.0)
+        // Shaft segment: base -> tip
         vertices.push(ndcX, ndcY, 0.0);
-
-        // Tip vertex (isTip = 1.0) - starts at same position, shader will displace it
         vertices.push(ndcX, ndcY, 1.0);
+
+        // Head left wing: tip -> left endpoint
+        vertices.push(ndcX, ndcY, 1.0);
+        vertices.push(ndcX, ndcY, 2.0);
+
+        // Head right wing: tip -> right endpoint
+        vertices.push(ndcX, ndcY, 1.0);
+        vertices.push(ndcX, ndcY, 3.0);
       }
     }
 
@@ -329,7 +337,7 @@ export class GPUResources {
     this.gl.bindVertexArray(null);
 
     console.log(
-      `Created arrow grid: ${cols}×${rows} = ${arrowVertexCount / 2} arrows`,
+      `Created arrow grid: ${cols}×${rows} = ${arrowVertexCount / verticesPerArrow} arrows`,
     );
 
     return { vao, vertexCount: arrowVertexCount };

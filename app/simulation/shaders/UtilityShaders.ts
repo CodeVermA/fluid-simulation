@@ -51,37 +51,11 @@ export const SHOW_DIVERGENCE_SHADER = `#version 300 es
     }
 `;
 
-/**
- * Velocity Arrow Visualization Shaders
- *
- * Renders velocity field as a grid of arrows using GL_LINES geometry.
- * Each arrow consists of two vertices: a base (fixed at grid point) and a tip (displaced by velocity).
- * Sampling is done at grid intervals (e.g., every 20px) to avoid clutter.
- */
-
-/**
- * Vertex shader for velocity arrows.
- *
- * Performs velocity sampling and displacement calculation per vertex.
- * Base vertices remain at grid positions; tip vertices are displaced by averaged velocity.
- *
- * Attributes:
- *   - a_position (vec2): Vertex position in NDC space [-1, 1]
- *   - a_isTip (float): 0.0 = base vertex, 1.0 = tip vertex
- *
- * Uniforms:
- *   - u_velocity (sampler2D): Velocity field texture (RG channels = velocity XY)
- *   - u_texelSize (vec2): Reciprocal of simulation resolution (1.0 / width, 1.0 / height)
- *   - u_minLength (float): Minimum arrow length in NDC space (e.g., 0.01)
- *   - u_maxLength (float): Maximum arrow length in NDC space (e.g., 0.15)
- *   - u_velocityScale (float): Multiplier converting velocity magnitude to arrow length
- *   - u_kernelSize (int): Kernel size for velocity averaging (e.g., 5 for 5×5 samples)
- */
 export const VELOCITY_LINES_VERTEX_SHADER = `#version 300 es
 precision highp float;
 
 layout(location = 0) in vec2 a_position;   // Vertex position in NDC [-1, 1]
-layout(location = 1) in float a_isTip;     // 0.0 = base, 1.0 = tip
+layout(location = 1) in float a_isTip;     // 0.0 = base, 1.0 = tip, 2.0 = head-left, 3.0 = head-right
 
 uniform sampler2D u_velocity;
 uniform vec2 u_texelSize;
@@ -121,10 +95,22 @@ void main() {
     float arrowLength = clamp(0.1 * (velocityMag * u_velocityScale), u_minLength, u_maxLength);
     vec2 displacement = velocityDir * arrowLength;
     
-    // Displace only tip vertices; base vertices remain at grid position
+    // Build arrow geometry by role:
+    // 0.0 = base, 1.0 = tip, 2.0/3.0 = arrow head wings
     vec2 finalPos = a_position;
-    if (a_isTip > 0.5) {
+    if (a_isTip > 0.5 && a_isTip < 1.5) {
         finalPos += displacement;
+    } else if (a_isTip > 1.5) {
+        vec2 perp = vec2(-velocityDir.y, velocityDir.x);
+        float headLength = arrowLength * 0.35;
+        float headWidth = arrowLength * 0.20;
+        vec2 tipPos = a_position + displacement;
+
+        if (a_isTip < 2.5) {
+            finalPos = tipPos - velocityDir * headLength + perp * headWidth;
+        } else {
+            finalPos = tipPos - velocityDir * headLength - perp * headWidth;
+        }
     }
     
     gl_Position = vec4(finalPos, 0.0, 1.0);

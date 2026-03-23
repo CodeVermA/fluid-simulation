@@ -1,5 +1,5 @@
 import { GPUResources, DoubleFramebuffer } from "./GPUResources";
-import { FluidShaders } from "./Shaders";
+import { FluidShaders } from "./FluidPrograms";
 
 export class FluidSolverGPU {
   // Boussinesq buoyancy parameters: f_y = -alpha * rho + beta * (T - T_amb)
@@ -188,11 +188,6 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  /**
-   * Computes the divergence of the velocity field.
-   * Divergence measures how much the velocity field is "expanding" or "compressing" at each point.
-   * A divergence-free field is incompressible (key property of fluids).
-   */
   private computeDivergence(freeSlip: boolean) {
     const gl = this.gl;
 
@@ -221,19 +216,6 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  /**
-   * Solves a linear system Ax = b using Jacobi iteration.
-   * Optimised to bind static WebGL state (programs, VAOs, uniforms) ONLY ONCE,
-   * significantly reducing CPU overhead during the ping-pong loop.
-   *
-   * @param x - The current solution estimate (DoubleFramebuffer to ping-pong)
-   * @param b - The right-hand side source texture (divergence or previous state)
-   * @param alpha - Stencil coefficient
-   * @param beta - Diagonal coefficient
-   * @param isPressure - TRUE for pressure projection, FALSE for diffusion
-   * @param freeSlip - TRUE for free-slip boundary conditions
-   * @param iterations - Number of Jacobi iterations to perform
-   */
   private solveLinearSystem(
     x: DoubleFramebuffer,
     b: WebGLTexture | null,
@@ -276,9 +258,6 @@ export class FluidSolverGPU {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, x.read.texture);
 
-      // FIX: WebGL Feedback Loop Prevention
-      // If a separate source texture 'b' is provided (like divergence), use it.
-      // If null, we bind x.read.texture safely for each iteration to restore explicit blurring.
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, b ? b : x.read.texture);
 
@@ -293,11 +272,6 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  /**
-   * Subtracts the pressure gradient from the velocity field.
-   * This enforces incompressibility by removing the divergent component of the velocity.
-   * After this step, the velocity field should be divergence-free.
-   */
   private subtractPressureGradient() {
     const gl = this.gl;
 
@@ -370,17 +344,6 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  /**
-   * Performs the projection step to make the velocity field divergence-free (incompressible).
-   * This is the GPU equivalent of the project() method in the CPU FluidSolver.
-   *
-   * Steps:
-   * 1. Compute divergence of velocity field
-   * 2. Solve Poisson equation for pressure using Jacobi iterations
-   * 3. Subtract pressure gradient from velocity
-   *
-   * @param iterations - Number of Jacobi iterations (default: 20, matching CPU version)
-   */
   project(iterations: number = 20, freeSlip: boolean) {
     // Step 1: Compute divergence
     this.computeDivergence(freeSlip);
@@ -409,11 +372,6 @@ export class FluidSolverGPU {
     this.subtractPressureGradient();
   }
 
-  /**
-   * Computes the curl (vorticity) field from the velocity field.
-   * Curl measures rotation: positive = counterclockwise, negative = clockwise.
-   * Stores result in this.curl for use by applyVorticity().
-   */
   private computeCurl() {
     const gl = this.gl;
 
@@ -437,13 +395,6 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  /**
-   * Applies vorticity confinement to amplify rotational motion.
-   * Adds force perpendicular to curl gradient to restore turbulence lost to numerical dissipation.
-   *
-   * @param dt - Timestep
-   * @param epsilon - Confinement strength (default: 20.0, higher = more swirls)
-   */
   private applyVorticity(dt: number, epsilon: number = 20.0) {
     const gl = this.gl;
 
@@ -475,14 +426,6 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  /**
-   * Updates the obstacle texture to create solid walls on the specified boundaries.
-   * Uses gl.scissor to efficiently clear rectangular regions to 1.0 (solid) or 0.0 (empty).
-   * @param top - Block the top edge
-   * @param bottom - Block the bottom edge
-   * @param left - Block the left edge
-   * @param right - Block the right edge
-   */
   updateWalls(top: boolean, bottom: boolean, left: boolean, right: boolean) {
     const gl = this.gl;
 
@@ -532,15 +475,6 @@ export class FluidSolverGPU {
     this.obstacles.swap();
   }
 
-  /**
-   * Draws a circular obstacle at the specified position.
-   * Renders fullscreen; shader preserves existing obstacles outside the circle.
-   * No scissor test for maximum performance.
-   *
-   * @param x - X coordinate in canvas pixels
-   * @param y - Y coordinate in canvas pixels
-   * @param radius - Circle radius in UV space [0,1] (default: 0.02)
-   */
   drawObstacles(x: number, y: number, radius: number = 0.02) {
     const gl = this.gl;
 
@@ -575,10 +509,6 @@ export class FluidSolverGPU {
     this.obstacles.swap();
   }
 
-  /**
-   * Resets the simulation to its initial state.
-   * Clears all velocity, density, pressure, curl, and divergence fields.
-   */
   reset() {
     this.resources.clearDoubleFramebuffer(this.velocity);
     this.resources.clearDoubleFramebuffer(this.density);
@@ -589,16 +519,6 @@ export class FluidSolverGPU {
     this.resources.clearDoubleFramebuffer(this.temperature);
   }
 
-  /**
-   * Generic diffusion solver for both velocity and density.
-   * Applies viscous damping using Jacobi iteration.
-   *
-   * @param target - Target buffer (velocity or density)
-   * @param dt - Timestep
-   * @param iters - Number of Jacobi iterations
-   * @param diffusionRate - Diffusion coefficient (viscosity or density diffusion)
-   * @param freeSlip - Use free-slip boundary conditions (density always uses free-slip)
-   */
   private diffuse(
     target: DoubleFramebuffer,
     dt: number,
@@ -614,16 +534,6 @@ export class FluidSolverGPU {
     this.solveLinearSystem(target, null, alpha, beta, false, freeSlip, iters);
   }
 
-  /**
-   * Advances the fluid simulation by one timestep.
-   * Implements complete Stable Fluids algorithm with vorticity confinement.
-   *
-   * @param dt - Timestep (typically 1/60 for 60 FPS)
-   * @param freeSlip - Use free-slip boundary conditions
-   * @param viscosity - Fluid viscosity [0, 1]
-   * @param vorticityStrength - Vorticity confinement [0, 50]
-   * @param iterations - Jacobi iterations for diffusion & pressure [10, 40]
-   */
   step(
     dt: number,
     freeSlip: boolean,

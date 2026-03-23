@@ -12,9 +12,6 @@ import {
 } from "./shaders/SimulationShaders";
 import {
   DRAW_OBSTACLES_SHADER,
-  SHOW_DIVERGENCE_SHADER,
-  VELOCITY_LINES_FRAGMENT_SHADER,
-  VELOCITY_LINES_VERTEX_SHADER,
 } from "./shaders/UtilityShaders";
 import { GPUResources } from "./GPUResources";
 

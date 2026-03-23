@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { FluidSolverGPU } from '../simulation/gpu/FluidSolverGPU';
-import { FluidUtils } from '../simulation/gpu/FluidUtility';
+import { FluidSolverGPU } from '../simulation/FluidSolver';
+import { FluidUtils } from '../simulation/FluidUtility';
 import { getColor } from '../utils/colorUtils';
 import { InteractionMode as InteractionModeEnum, type InteractionMode } from '../types/interactionMode';
 
@@ -16,6 +16,7 @@ interface FluidCanvasGPUProps {
   interactionMode: InteractionMode;
   hideObstacles: boolean;
   simulationParams: {
+    temperature: number;
     velocity: { x: number; y: number };
     viscosity: number;
     slipCondition: number;
@@ -39,6 +40,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     const interactionModeRef = useRef<InteractionMode>(interactionMode);
     const hideObstaclesRef = useRef(hideObstacles);
     const simulationParamsRef = useRef(simulationParams);
+
 
     // Interaction State
     const isMouseDown = useRef(false);
@@ -122,7 +124,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
             const moved = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
 
             if (moved) {
-              if (mode === InteractionModeEnum.AddFluid) {
+              if (mode === InteractionModeEnum.AddVelocity) {
                 // Mode 0: Normal simulation — add dye and velocity
                 solver.splat(
                   solver.density,
@@ -140,15 +142,15 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
                 // Mode 2: Draw Obstacles
                 solver.drawObstacles(
                   mousePos.current.x, mousePos.current.y,
-                  0.005 + (params.penWidth / 10) * 0.015,
+                  params.penWidth * MIN_SPLAT_RADIUS,
                 );
               }
-              else if (mode === InteractionModeEnum.AddHeat) {
+              else if (mode === InteractionModeEnum.ChangeTemp) {
                 // Mode 1: Add Heat (increases temperature, which creates buoyancy forces)
                 solver.splat(
                   solver.temperature,
                   mousePos.current.x, mousePos.current.y,
-                  1.0, 0.0, 0.0, // Red channel = temperature
+                  params.temperature, 0.0, 0.0,
                   splatRadius,
                 );
               }
@@ -162,16 +164,13 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
 
           // --- Render based on interaction mode ---
           switch (mode) {
-            case InteractionModeEnum.DivergenceField: // Debug view: Divergence field
-              utils.renderDivergence(solver);
-              break;
             case InteractionModeEnum.VelocityVectors: // Debug view: Velocity vectors
               utils.renderVelocityArrows(solver);
               break;
-            case InteractionModeEnum.AddFluid:
-            case InteractionModeEnum.AddHeat:
-            case InteractionModeEnum.DrawObstacles:
-            default: // Default simulation render
+            // case InteractionModeEnum.AddFluid:
+            // case InteractionModeEnum.AddHeat:
+            // case InteractionModeEnum.DrawObstacles:
+            default: // Anything else: Normal rendering
               solver.render(hideObstaclesRef.current);
               break;
           }

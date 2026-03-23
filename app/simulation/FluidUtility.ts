@@ -1,4 +1,4 @@
-import { FluidSolverGPU } from "./FluidSolverGPU";
+import { FluidSolverGPU } from "./FluidSolver";
 import { GPUResources } from "./GPUResources";
 import {
   SHOW_DIVERGENCE_SHADER,
@@ -15,7 +15,7 @@ export class FluidUtils {
   private arrowVAO: WebGLVertexArrayObject;
   private arrowVertexCount: number;
 
-  constructor(resources: GPUResources, gridSpacing: number = 20) {
+  constructor(resources: GPUResources, gridSpacing: number = 15) {
     this.gl = resources.gl;
     this.program = resources.createProgram(
       VERTEX_SHADER,
@@ -110,9 +110,9 @@ export class FluidUtils {
 
     // Set shader parameters
     gl.uniform2f(uTexelSize, 1.0 / solver.width, 1.0 / solver.height);
-    gl.uniform1f(uMinLength, 0.01); // 1.0% of screen
-    gl.uniform1f(uMaxLength, 0.1); // 10% of screen
-    gl.uniform1f(uVelocityScale, 0.8); // Adjust for visual appeal
+    gl.uniform1f(uMinLength, 0.01); // 1% of screen
+    gl.uniform1f(uMaxLength, 0.07); // 7% of screen
+    gl.uniform1f(uVelocityScale, 0.1); 
     gl.uniform1i(uKernelSize, 5); // 5×5 averaging kernel
 
     // Enable line smoothing for better visual quality

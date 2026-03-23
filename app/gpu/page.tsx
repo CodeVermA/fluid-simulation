@@ -10,23 +10,24 @@ import {
   type InteractionMode,
 } from '../types/interactionMode';
 
-const SCREEN_RESOLUTION = [845, 480];
+const SCREEN_RESOLUTION = [640, 360];
 
 export default function GPUPage() {
   const canvasRef = useRef<FluidCanvasGPUHandle>(null);
   const [boundaries, setBoundaries] = useState({ top: true, bottom: true, left: true, right: true });
   const [isMenuExpanded, setIsMenuExpanded] = useState(false);
-  const [interactionMode, setInteractionMode] = useState<InteractionMode>(InteractionModeEnum.AddFluid);
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>(InteractionModeEnum.AddVelocity);
   const [hideObstacles, setHideObstacles] = useState(true);
 
   // Simulation parameters
   const [simulationParams, setSimulationParams] = useState({
+    temperature: 0,
     velocity: { x: 0, y: 0 },
     viscosity: 0.0001,
     performance: 50,
     slipCondition: 0,
     penWidth: 5,
-    vorticityStrength: 0,
+    vorticityStrength: 1,
   });
 
   const handleReset = () => {
@@ -127,6 +128,26 @@ export default function GPUPage() {
               <span className="text-lg"></span> Simulation Parameters
             </h3>
             <div className="space-y-4">
+              {/* Temperature Slider */}
+              <div>
+                <label className="text-gray-400 text-sm font-medium mb-2 block">
+                  Temperature: <span className="text-cyan-400 font-mono">{simulationParams.temperature}</span>
+                </label>
+                <input
+                  type="range"
+                  value={simulationParams.temperature}
+                  onChange={(e) => setSimulationParams({ ...simulationParams, temperature: Number(e.target.value) })}
+                  min="-100"
+                  max="100"
+                  step="1"
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                />
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>Cold</span>
+                  <span>Hot</span>
+                </div>
+              </div>
+
               {/* Velocity Controls */}
               <div>
                 <label className="text-gray-400 text-sm font-medium mb-2 block">Velocity</label>
@@ -154,20 +175,54 @@ export default function GPUPage() {
                 </div>
               </div>
 
-              {/* Viscosity Control */}
-              <div>
-                <label className="text-gray-400 text-sm font-medium mb-2 block">
-                  Viscosity: <span className="text-cyan-400 font-mono text-xs">{simulationParams.viscosity.toFixed(6)}</span>
+              {/* Viscosity */}
+              <div className="flex flex-col gap-2 mt-4">
+                <label className="text-sm font-medium text-white flex justify-between">
+                  <span>Viscosity (μ)</span>
+                  <span className="text-gray-400 font-mono">{simulationParams.viscosity.toFixed(4)}</span>
                 </label>
+
                 <input
                   type="number"
+                  min="0.0001"
+                  step="0.00005"
                   value={simulationParams.viscosity}
-                  onChange={(e) => setSimulationParams({ ...simulationParams, viscosity: Number(e.target.value) })}
-                  step="0.00001"
-                  min="0"
-                  max="10"
-                  className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-600 hover:border-cyan-500 focus:border-cyan-500 focus:outline-none transition-colors text-sm"
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!Number.isNaN(val) && val >= 0.0001) {
+                      setSimulationParams({ ...simulationParams, viscosity: val });
+                    }
+                  }}
+                  className="w-full bg-gray-800 text-white border border-gray-600 rounded px-3 py-2 font-mono text-sm"
+                  placeholder="Enter viscosity..."
                 />
+
+                <div className="grid grid-cols-4 gap-2 mt-1">
+                  <button
+                    onClick={() => setSimulationParams({ ...simulationParams, viscosity: 0.0001 })}
+                    className={`text-xs py-1 rounded border ${simulationParams.viscosity === 0.0001 ? 'bg-blue-600 border-blue-400' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}
+                  >
+                    Smoke
+                  </button>
+                  <button
+                    onClick={() => setSimulationParams({ ...simulationParams, viscosity: 0.002 })}
+                    className={`text-xs py-1 rounded border ${simulationParams.viscosity === 0.002 ? 'bg-blue-600 border-blue-400' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}
+                  >
+                    Water
+                  </button>
+                  <button
+                    onClick={() => setSimulationParams({ ...simulationParams, viscosity: 0.015 })}
+                    className={`text-xs py-1 rounded border ${simulationParams.viscosity === 0.015 ? 'bg-blue-600 border-blue-400' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}
+                  >
+                    Oil
+                  </button>
+                  <button
+                    onClick={() => setSimulationParams({ ...simulationParams, viscosity: 0.05 })}
+                    className={`text-xs py-1 rounded border ${simulationParams.viscosity === 0.05 ? 'bg-blue-600 border-blue-400' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}
+                  >
+                    Honey
+                  </button>
+                </div>
               </div>
 
               {/* Pen Width Slider */}
@@ -193,7 +248,7 @@ export default function GPUPage() {
               {/* Slip Condition Slider */}
               <div>
                 <label className="text-gray-400 text-sm font-medium mb-2 block">
-                  Slip Condition: <span className="text-cyan-400 font-mono">{simulationParams.slipCondition === 0 ? 'Free-Slip' : 'No-Slip'}</span>
+                  Boundary Friction: <span className="text-cyan-400 font-mono">{simulationParams.slipCondition === 0 ? 'Slippery' : 'High Friction'}</span>
                 </label>
                 <div className="relative bg-gray-700 rounded-lg p-1 flex">
                   {/* Sliding background indicator */}
@@ -225,15 +280,15 @@ export default function GPUPage() {
               {/* Vorticity Strength */}
               <div>
                 <label className="text-gray-400 text-sm font-medium mb-2 block">
-                  Vorticity Strength: <span className="text-cyan-400 font-mono">{simulationParams.vorticityStrength}</span>
+                  Vorticity Strength: <span className="text-cyan-400 font-mono">{simulationParams.vorticityStrength}x</span>
                 </label>
                 <input
                   type="range"
                   value={simulationParams.vorticityStrength}
                   onChange={(e) => setSimulationParams({ ...simulationParams, vorticityStrength: Number(e.target.value) })}
-                  min="0"
-                  max="100"
-                  step="1"
+                  min="1"
+                  max="5"
+                  step="0.1"
                   className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                 />
                 <div className="flex justify-between text-xs text-gray-500 mt-1">
