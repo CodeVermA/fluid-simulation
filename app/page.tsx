@@ -9,7 +9,7 @@ export default function Home() {
           Fluid Dynamics Simulator
         </h1>
         <p className="text-gray-400 text-lg">
-          Visualising fluid dynamics using Jos Stam's Stable Fluids Algorithm (1999)
+          Visualising fluid dynamics using Jos Stam&apos;s Stable Fluids Algorithm (1999)
         </p>
       </div>
 
@@ -23,6 +23,20 @@ export default function Home() {
             </h2>
             <p className="text-gray-300 mb-4">
               WebGL2 accelerated implementation with GLSL shaders
+            </p>
+          </div>
+        </Link>
+
+        {/* Performance Test Card */}
+        <Link href="/benchmark">
+          <div className="bg-gray-800 hover:bg-gray-700 transition-colors duration-300 rounded-lg p-8 border border-gray-700 hover:border-blue-500 cursor-pointer shadow-lg">
+            <h2 className="text-2xl font-bold mb-4 text-blue-400">
+              Performance Test
+            </h2>
+            <p className="text-gray-300 mb-4">
+              This runs a predefined set of instructions to benchmark the GPU solver.
+              <br />
+              It is not interactive and is meant for performance testing only.
             </p>
           </div>
         </Link>

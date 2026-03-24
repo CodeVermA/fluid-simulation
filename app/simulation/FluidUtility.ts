@@ -47,10 +47,7 @@ export class FluidUtils {
     gl.bindVertexArray(this.quadVAO);
 
     const uTexture = gl.getUniformLocation(this.program, "u_texture");
-
-    let texture: WebGLTexture;
-
-    texture = solver.divergence.texture;
+    const texture = solver.divergence.texture;
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -112,7 +109,7 @@ export class FluidUtils {
     gl.uniform2f(uTexelSize, 1.0 / solver.width, 1.0 / solver.height);
     gl.uniform1f(uMinLength, 0.01); // 1% of screen
     gl.uniform1f(uMaxLength, 0.07); // 7% of screen
-    gl.uniform1f(uVelocityScale, 0.1); 
+    gl.uniform1f(uVelocityScale, 0.1);
     gl.uniform1i(uKernelSize, 5); // 5×5 averaging kernel
 
     // Enable line smoothing for better visual quality

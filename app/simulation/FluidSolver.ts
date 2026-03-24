@@ -15,8 +15,8 @@ export class FluidSolverGPU {
   private readonly BASE_VORTICITY = 20.0;
 
   // Density Diffusion parameters
-  private readonly MAX_DENSITY_DIFFUSION = 0.5;
-  private readonly SCALE = 100000.0; // 10^5
+  private readonly MAX_DENSITY_DIFFUSION = 0.1;
+  private readonly SCALE = 30000.0; // 10^5
 
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
@@ -563,8 +563,6 @@ export class FluidSolverGPU {
     const densityDiffusionRate =
       this.MAX_DENSITY_DIFFUSION / (1.0 + viscosity * this.SCALE);
 
-    console.log(`Diffusion Rate: ${densityDiffusionRate.toFixed(5)}`);
-
     // STEP 0: BUOYANCY (External Force)
     this.applyBuoyancy(
       dt,
@@ -593,8 +591,5 @@ export class FluidSolverGPU {
     // STEP 6: DIFFUSE DENSITY AND HEAT
     this.diffuse(this.density, dt, iterations, densityDiffusionRate, true);
     this.diffuse(this.temperature, dt, iterations, this.TEMP_DIFFUSION, true);
-
-    console.log(`Density Diffusion Rate: ${densityDiffusionRate.toFixed(4)}`);
-    console.log(`Vorticity Strength: ${vorticityMultiplier.toFixed(4)}`);
   }
 }

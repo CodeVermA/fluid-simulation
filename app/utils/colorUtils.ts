@@ -23,12 +23,14 @@ export function HSVtoRGB(
   v: number,
   intensity: number = 1.0,
 ): RGBColor {
-  let r, g, b, i, f, p, q, t;
-  i = Math.floor(h * 6);
-  f = h * 6 - i;
-  p = v * (1 - s);
-  q = v * (1 - f * s);
-  t = v * (1 - (1 - f) * s);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
 
   switch (i % 6) {
     case 0:
@@ -66,9 +68,9 @@ export function HSVtoRGB(
   }
 
   return {
-    r: r! * intensity,
-    g: g! * intensity,
-    b: b! * intensity,
+    r: r * intensity,
+    g: g * intensity,
+    b: b * intensity,
   };
 }
 

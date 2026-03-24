@@ -341,11 +341,11 @@ export default function GPUPage() {
                 </div>
               </div>
 
-              {/* Performance Slider */}
+              {/* Solver Iterations */}
               <div>
                 <label className="text-sm font-medium text-white mb-2 flex justify-between">
-                  <span>Accuracy</span>
-                  <span className="text-gray-400 font-mono">{simulationParams.performance}%</span>
+                  <span>Solver Iterations</span>
+                  <span className="text-gray-400 font-mono">{simulationParams.performance}</span>
                 </label>
                 <input
                   type="range"
@@ -356,8 +356,8 @@ export default function GPUPage() {
                   className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                 />
                 <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>Faster</span>
-                  <span>More Accurate</span>
+                  <span>Lower Accuracy</span>
+                  <span>Max Accuracy</span>
                 </div>
               </div>
 
