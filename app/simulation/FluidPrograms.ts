@@ -10,9 +10,7 @@ import {
   VORTICITY_SHADER,
   BUOYANCY_SHADER,
 } from "./shaders/SimulationShaders";
-import {
-  DRAW_OBSTACLES_SHADER,
-} from "./shaders/UtilityShaders";
+import { OBSTACLES_SHADER } from "./shaders/UtilityShaders";
 import { GPUResources } from "./GPUResources";
 
 /**
@@ -86,6 +84,7 @@ function buildUniforms(gl: WebGL2RenderingContext, p: FluidShaders) {
       "point",
       "radius",
       "aspectRatio",
+      "erase",
     ] as const),
 
     buoyancy: getUniforms(gl, p.buoyancyProgram, [
@@ -158,7 +157,7 @@ export class FluidShaders {
     );
     this.obstacleProgram = resources.createProgram(
       VERTEX_SHADER,
-      DRAW_OBSTACLES_SHADER,
+      OBSTACLES_SHADER,
     );
     this.buoyancyProgram = resources.createProgram(
       VERTEX_SHADER,

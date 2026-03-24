@@ -3,13 +3,20 @@ import { FluidShaders } from "./FluidPrograms";
 
 export class FluidSolverGPU {
   // Boussinesq buoyancy parameters: f_y = -alpha * rho + beta * (T - T_amb)
-  private readonly buoyancyAlpha = 0.05;
-  private readonly buoyancyBeta = 1.25;
-  private readonly ambientTemperature = 0.0;
+  private readonly BUOYANCY_ALPHA = 0.05;
+  private readonly BUOYANCY_BETA = 1.25;
+  private readonly AMBIENT_TEMP = 0.0;
 
   // Thermal transport parameters
-  private readonly temperatureDissipation = 0.995;
-  private readonly temperatureDiffusion = 0.0001;
+  private readonly TEMP_DISSIPATION = 0.995;
+  private readonly TEMP_DIFFUSION = 0.0001;
+
+  // Vorticity confinement parameters
+  private readonly BASE_VORTICITY = 20.0;
+
+  // Density Diffusion parameters
+  private readonly MAX_DENSITY_DIFFUSION = 0.5;
+  private readonly SCALE = 100000.0; // 10^5
 
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
@@ -17,7 +24,7 @@ export class FluidSolverGPU {
   private shaders: FluidShaders;
   private quadVAO: WebGLVertexArrayObject;
 
-  // Simulation grid praameters
+  // Simulation grid parameters
   width: number;
   height: number;
   texelSize: { x: number; y: number };
@@ -344,7 +351,7 @@ export class FluidSolverGPU {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
-  project(iterations: number = 20, freeSlip: boolean) {
+  project(iterations: number = 50, freeSlip: boolean) {
     // Step 1: Compute divergence
     this.computeDivergence(freeSlip);
 
@@ -475,7 +482,12 @@ export class FluidSolverGPU {
     this.obstacles.swap();
   }
 
-  drawObstacles(x: number, y: number, radius: number = 0.02) {
+  drawObstacles(
+    x: number,
+    y: number,
+    radius: number = 0.02,
+    erase: boolean = false,
+  ) {
     const gl = this.gl;
 
     // Convert canvas coordinates to UV space [0,1]
@@ -493,6 +505,7 @@ export class FluidSolverGPU {
     gl.uniform2f(this.shaders.u.obstacle.point, uvX, uvY);
     gl.uniform1f(this.shaders.u.obstacle.radius, radius);
     gl.uniform1f(this.shaders.u.obstacle.aspectRatio, this.width / this.height);
+    gl.uniform1i(this.shaders.u.obstacle.erase, erase ? 1 : 0);
 
     // Bind obstacle READ texture (current state)
     gl.activeTexture(gl.TEXTURE0);
@@ -526,10 +539,15 @@ export class FluidSolverGPU {
     diffusionRate: number,
     freeSlip: boolean,
   ) {
-    if (diffusionRate <= 0.0 || iters <= 0 || dt < 0.0) return;
+    // 1. Safety check to prevent division by zero
+    if (diffusionRate <= 0.00001 || iters <= 0 || dt <= 0.0) return;
 
+    // 2. THE FIX: The Standard Implicit Diffusion Formula
+    // Notice how diffusionRate is now in the denominator!
     const alpha = (diffusionRate * dt) / (this.texelSize.x * this.texelSize.x);
-    const beta = 1.0 + 4.0 * alpha;
+
+    // 3. THE FIX: beta is 4 + alpha (not 1 + 4*alpha)
+    const beta = 1 + 4.0 * alpha;
 
     this.solveLinearSystem(target, null, alpha, beta, false, freeSlip, iters);
   }
@@ -538,22 +556,26 @@ export class FluidSolverGPU {
     dt: number,
     freeSlip: boolean,
     viscosity: number = 0.0001,
-    vorticityStrength: number = 0,
+    vorticityMultiplier: number = 0,
     iterations: number = 50,
   ) {
-    const densityDiffusion = 0.00001;
+    // Phenomenological Stokes-Einstein approximation
+    const densityDiffusionRate =
+      this.MAX_DENSITY_DIFFUSION / (1.0 + viscosity * this.SCALE);
+
+    console.log(`Diffusion Rate: ${densityDiffusionRate.toFixed(5)}`);
 
     // STEP 0: BUOYANCY (External Force)
     this.applyBuoyancy(
       dt,
-      this.buoyancyAlpha,
-      this.buoyancyBeta,
-      this.ambientTemperature,
+      this.BUOYANCY_ALPHA,
+      this.BUOYANCY_BETA,
+      this.AMBIENT_TEMP,
     );
 
     //STEP 1: VORTICITY CONFINEMENT
     this.computeCurl();
-    this.applyVorticity(dt, vorticityStrength);
+    this.applyVorticity(dt, this.BASE_VORTICITY * vorticityMultiplier);
 
     // STEP 2: ADVECT VELOCITY
     this.advect(this.velocity, this.velocity, dt);
@@ -566,21 +588,13 @@ export class FluidSolverGPU {
 
     // STEP 5: ADVECT DENSITY AND HEAT
     this.advect(this.density, this.velocity, dt);
-    this.advect(
-      this.temperature,
-      this.velocity,
-      dt,
-      this.temperatureDissipation,
-    );
+    this.advect(this.temperature, this.velocity, dt, this.TEMP_DISSIPATION);
 
     // STEP 6: DIFFUSE DENSITY AND HEAT
-    this.diffuse(this.density, dt, iterations, densityDiffusion, true);
-    this.diffuse(
-      this.temperature,
-      dt,
-      iterations / 2,
-      this.temperatureDiffusion,
-      true,
-    );
+    this.diffuse(this.density, dt, iterations, densityDiffusionRate, true);
+    this.diffuse(this.temperature, dt, iterations, this.TEMP_DIFFUSION, true);
+
+    console.log(`Density Diffusion Rate: ${densityDiffusionRate.toFixed(4)}`);
+    console.log(`Vorticity Strength: ${vorticityMultiplier.toFixed(4)}`);
   }
 }

@@ -1,4 +1,4 @@
-export const DRAW_OBSTACLES_SHADER = `#version 300 es
+export const OBSTACLES_SHADER = `#version 300 es
 precision highp float;
 
 #define OBSTACLE_VALUE vec4(1.0, 0.0, 0.0, 1.0)
@@ -9,17 +9,21 @@ uniform sampler2D u_obstacles;
 uniform vec2 u_point; // Center of the obstacle in UV coordinates
 uniform float u_radius; // Radius of the circular obstacle
 uniform float u_aspectRatio;
-
+uniform bool u_erase; // If true, remove obstacle instead of adding
 out vec4 outColor;
 
 void main() {
     vec2 p = v_texCoord - u_point;
     p.x *= u_aspectRatio;
-    float dist = length(p);
+    float dist2 = dot(p, p);
 
     // If within radius, set as obstacle
-    if (dist < u_radius) {
-        outColor = OBSTACLE_VALUE; // Mark as solid
+    if (dist2 < u_radius) {
+        if (u_erase) {
+            outColor = vec4(0.0); // Remove obstacle
+        } else {
+            outColor = OBSTACLE_VALUE; // Mark as solid
+        }
     } else {
         outColor = texture(u_obstacles, v_texCoord); // Keep existing value
     }

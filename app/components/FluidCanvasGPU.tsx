@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react';
 import { FluidSolverGPU } from '../simulation/FluidSolver';
 import { FluidUtils } from '../simulation/FluidUtility';
 import { getColor } from '../utils/colorUtils';
+import { createFPSTracker, sampleFPS } from '../utils/fpsUtils';
 import { InteractionMode as InteractionModeEnum, type InteractionMode } from '../types/interactionMode';
 
-const FPS = 60;
+const FPS = 165;
 const MIN_SPLAT_RADIUS = 0.0001;
 
 interface FluidCanvasGPUProps {
@@ -14,6 +15,7 @@ interface FluidCanvasGPUProps {
   height: number;
   boundaries: { top: boolean; bottom: boolean; left: boolean; right: boolean };
   interactionMode: InteractionMode;
+  obstacleEraser: boolean;
   hideObstacles: boolean;
   simulationParams: {
     temperature: number;
@@ -31,15 +33,18 @@ export interface FluidCanvasGPUHandle {
 }
 
 const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
-  ({ width, height, boundaries, interactionMode, hideObstacles, simulationParams }, ref) => {
+  ({ width, height, boundaries, interactionMode, obstacleEraser, hideObstacles, simulationParams }, ref) => {
+    const [fpsDisplay, setFpsDisplay] = useState(0);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const solverRef = useRef<FluidSolverGPU | null>(null);
     const fluidUtilsRef = useRef<FluidUtils | null>(null);
 
     // Refs to avoid stale closures in the animation loop
     const interactionModeRef = useRef<InteractionMode>(interactionMode);
+    const obstacleEraserRef = useRef(obstacleEraser);
     const hideObstaclesRef = useRef(hideObstacles);
     const simulationParamsRef = useRef(simulationParams);
+    const fpsTrackerRef = useRef(createFPSTracker(500));
 
 
     // Interaction State
@@ -57,6 +62,10 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     useEffect(() => {
       hideObstaclesRef.current = hideObstacles;
     }, [hideObstacles]);
+
+    useEffect(() => {
+      obstacleEraserRef.current = obstacleEraser;
+    }, [obstacleEraser]);
 
     // Update simulation params
     useEffect(() => {
@@ -101,6 +110,8 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     useEffect(() => {
       let animationId: number;
 
+      fpsTrackerRef.current = createFPSTracker(500, performance.now());
+
       const loop = () => {
         const solver = solverRef.current;
         const utils = fluidUtilsRef.current;
@@ -112,8 +123,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
 
           const freeSlip = params.slipCondition === 0;
           const viscosity = params.viscosity;
-          const vorticityStrength = params.vorticityStrength;
-          // Map performance 0–100% → 0-100 Jacobi iterations
+          const vorticityMultiplier = params.vorticityStrength;
           const iterations = params.performance;
           const splatRadius = MIN_SPLAT_RADIUS * params.penWidth;
 
@@ -142,7 +152,8 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
                 // Mode 2: Draw Obstacles
                 solver.drawObstacles(
                   mousePos.current.x, mousePos.current.y,
-                  params.penWidth * MIN_SPLAT_RADIUS,
+                  splatRadius * 0.25,
+                  obstacleEraserRef.current,
                 );
               }
               else if (mode === InteractionModeEnum.ChangeTemp) {
@@ -160,19 +171,22 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
           lastMousePos.current = { ...mousePos.current };
 
           // --- Step Simulation ---
-          solver.step(dt, freeSlip, viscosity, vorticityStrength, iterations);
+          solver.step(dt, freeSlip, viscosity, vorticityMultiplier, iterations);
 
           // --- Render based on interaction mode ---
           switch (mode) {
             case InteractionModeEnum.VelocityVectors: // Debug view: Velocity vectors
               utils.renderVelocityArrows(solver);
               break;
-            // case InteractionModeEnum.AddFluid:
-            // case InteractionModeEnum.AddHeat:
-            // case InteractionModeEnum.DrawObstacles:
+
             default: // Anything else: Normal rendering
               solver.render(hideObstaclesRef.current);
               break;
+          }
+
+          const measuredFps = sampleFPS(fpsTrackerRef.current, performance.now());
+          if (measuredFps !== null) {
+            setFpsDisplay(measuredFps);
           }
         }
         animationId = requestAnimationFrame(loop);
@@ -226,15 +240,20 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     };
 
     return (
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        className="border-2 border-gray-700 rounded-xl shadow-2xl bg-black w-full max-w-6xl hover:border-cyan-500/50 transition-colors duration-300 cursor-crosshair"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-      />
+      <div className="relative w-full max-w-7xl">
+        <canvas
+          ref={canvasRef}
+          width={width}
+          height={height}
+          className="border-2 border-gray-700 rounded-xl shadow-2xl bg-black w-full hover:border-cyan-500/50 transition-colors duration-300 cursor-crosshair"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+        />
+        <div className="pointer-events-none absolute top-3 right-3 rounded-md border border-gray-600 bg-gray-900/80 px-2 py-1 text-xs font-medium text-cyan-300 backdrop-blur-sm">
+          FPS: {fpsDisplay}
+        </div>
+      </div>
     );
   }
 );
