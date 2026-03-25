@@ -259,14 +259,14 @@ export class GPUResources {
    * @param gridSpacing Spacing between arrows in pixels (e.g., 25)
    * @returns Object containing VAO and vertex count
    */
-  public createArrowGrid(gridSpacing: number): {
+  public createArrowGrid(
+    width: number,
+    height: number,
+    gridSpacing: number,
+  ): {
     vao: WebGLVertexArrayObject;
     vertexCount: number;
   } {
-    const canvas = this.gl.canvas as HTMLCanvasElement;
-    const width = canvas.width;
-    const height = canvas.height;
-
     // Calculate grid dimensions
     const cols = Math.floor(width / gridSpacing);
     const rows = Math.floor(height / gridSpacing);

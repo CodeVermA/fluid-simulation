@@ -172,8 +172,8 @@ export class FluidSolverGPU {
     // 1-(y) to flip Y axis (canvas vs texture coords)
     gl.uniform2f(
       this.shaders.u.splat.point,
-      x / this.canvas.width,
-      1.0 - y / this.canvas.height,
+      x / this.width,
+      1.0 - y / this.height,
     );
 
     gl.uniform3f(this.shaders.u.splat.color, dx, dy, dz);
@@ -492,8 +492,8 @@ export class FluidSolverGPU {
 
     // Convert canvas coordinates to UV space [0,1]
     // Flip Y-axis because canvas Y (top-left origin) ≠ texture Y (bottom-left origin)
-    const uvX = x / this.canvas.width;
-    const uvY = 1.0 - y / this.canvas.height;
+    const uvX = x / this.width;
+    const uvY = 1.0 - y / this.height;
 
     // Setup WebGL state
     gl.viewport(0, 0, this.width, this.height);
@@ -558,11 +558,8 @@ export class FluidSolverGPU {
     viscosity: number = 0.0001,
     vorticityMultiplier: number = 0,
     iterations: number = 50,
+    densityDiffusion: boolean = false,
   ) {
-    // Phenomenological Stokes-Einstein approximation
-    const densityDiffusionRate =
-      this.MAX_DENSITY_DIFFUSION / (1.0 + viscosity * this.SCALE);
-
     // STEP 0: BUOYANCY (External Force)
     this.applyBuoyancy(
       dt,
@@ -589,7 +586,11 @@ export class FluidSolverGPU {
     this.advect(this.temperature, this.velocity, dt, this.TEMP_DISSIPATION);
 
     // STEP 6: DIFFUSE DENSITY AND HEAT
-    this.diffuse(this.density, dt, iterations, densityDiffusionRate, true);
+    if (densityDiffusion) {
+      const densityDiffusionRate =
+        this.MAX_DENSITY_DIFFUSION / (1.0 + viscosity * this.SCALE);
+      this.diffuse(this.density, dt, iterations, densityDiffusionRate, true);
+    }
     this.diffuse(this.temperature, dt, iterations, this.TEMP_DIFFUSION, true);
   }
 }

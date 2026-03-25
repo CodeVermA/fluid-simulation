@@ -2,10 +2,17 @@ import { FluidSolverGPU } from "../simulation/FluidSolver";
 
 export const BENCHMARK_DURATION_MS = 60_000;
 export const BENCHMARK_SOLVER_ITERATIONS = 50;
+export const BENCHMARK_DISPLAY_SCALE = 2;
+const MAX_BENCHMARK_FRAME_SAMPLES = 120_000;
 export const BENCHMARK_RESOLUTION = {
-  width: 640,
-  height: 360,
+  width: 432,
+  height: 240,
 } as const;
+
+export interface BenchmarkFrameBuffer {
+  values: Float64Array;
+  length: number;
+}
 
 export interface BenchmarkResult {
   averageFps: number;
@@ -25,6 +32,30 @@ export interface BenchmarkDeviceInfo {
 
 export interface BenchmarkWorkloadState {
   lastObstaclePhase: number;
+}
+
+export function createBenchmarkFrameBuffer(): BenchmarkFrameBuffer {
+  return {
+    // Preallocate once so frame sampling stays O(1) during the benchmark.
+    values: new Float64Array(MAX_BENCHMARK_FRAME_SAMPLES),
+    length: 0,
+  };
+}
+
+export function appendBenchmarkFrameTime(
+  buffer: BenchmarkFrameBuffer,
+  frameTimeMs: number,
+): BenchmarkFrameBuffer {
+  if (frameTimeMs <= 0 || buffer.length >= buffer.values.length) {
+    return buffer;
+  }
+
+  buffer.values[buffer.length] = frameTimeMs;
+
+  return {
+    values: buffer.values,
+    length: buffer.length + 1,
+  };
 }
 
 const OBSTACLE_PATTERNS: ReadonlyArray<
@@ -241,22 +272,29 @@ function detectPlatformOs(
 }
 
 export function calculateBenchmarkMetrics(
-  frameTimesMs: number[],
+  frameTimesMs: ArrayLike<number>,
+  sampleCount: number = frameTimesMs.length,
 ): Pick<BenchmarkResult, "averageFps" | "onePercentLowFps"> {
-  if (frameTimesMs.length === 0) {
+  if (sampleCount === 0) {
     return {
       averageFps: 0,
       onePercentLowFps: 0,
     };
   }
 
-  const totalFrameTimeMs = frameTimesMs.reduce((sum, frameTime) => {
-    return sum + frameTime;
-  }, 0);
-  const averageFps = (frameTimesMs.length * 1000) / totalFrameTimeMs;
+  let totalFrameTimeMs = 0;
+  const sampledFrameTimes = new Array<number>(sampleCount);
 
-  const slowestFrameCount = Math.max(1, Math.ceil(frameTimesMs.length * 0.01));
-  const slowestFrameTimes = [...frameTimesMs]
+  for (let index = 0; index < sampleCount; index += 1) {
+    const frameTime = frameTimesMs[index];
+    totalFrameTimeMs += frameTime;
+    sampledFrameTimes[index] = frameTime;
+  }
+
+  const averageFps = (sampleCount * 1000) / totalFrameTimeMs;
+
+  const slowestFrameCount = Math.max(1, Math.ceil(sampleCount * 0.01));
+  const slowestFrameTimes = sampledFrameTimes
     .sort((a, b) => b - a)
     .slice(0, slowestFrameCount);
   const averageSlowestFrameTimeMs =

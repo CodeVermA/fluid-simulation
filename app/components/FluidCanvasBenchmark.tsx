@@ -8,14 +8,18 @@ import FluidCanvasGPU, {
 } from './FluidCanvasGPU';
 import { InteractionMode } from '../types/interactionMode';
 import {
+  BENCHMARK_DISPLAY_SCALE,
   BENCHMARK_DURATION_MS,
   BENCHMARK_RESOLUTION,
   BENCHMARK_SOLVER_ITERATIONS,
+  appendBenchmarkFrameTime,
   applyBenchmarkWorkload,
   calculateBenchmarkMetrics,
+  createBenchmarkFrameBuffer,
   createBenchmarkWorkloadState,
   detectBenchmarkDeviceInfo,
   type BenchmarkDeviceInfo,
+  type BenchmarkFrameBuffer,
   type BenchmarkResult,
   type BenchmarkWorkloadState,
 } from '../utils/benchmarkUtils';
@@ -31,6 +35,7 @@ const BENCHMARK_SIMULATION_PARAMS = {
   temperature: 35,
   velocity: { x: 18, y: 12 },
   viscosity: 0.0001,
+  densityDiffusion: false,
   performance: BENCHMARK_SOLVER_ITERATIONS,
   slipCondition: 0,
   penWidth: 5,
@@ -47,7 +52,7 @@ interface BenchmarkRunState {
   startedAtMs: number;
   lastFrameTimeMs: number;
   lastReportedProgress: number;
-  frameTimesMs: number[];
+  frameTimesMs: BenchmarkFrameBuffer;
   workloadState: BenchmarkWorkloadState;
   deviceInfo: BenchmarkDeviceInfo;
   complete: boolean;
@@ -69,7 +74,7 @@ function beginBenchmarkRun(
     startedAtMs,
     lastFrameTimeMs: startedAtMs,
     lastReportedProgress: 0,
-    frameTimesMs: [],
+    frameTimesMs: createBenchmarkFrameBuffer(),
     workloadState: createBenchmarkWorkloadState(),
     deviceInfo: detectBenchmarkDeviceInfo(runtime.solver.resources.gl),
     complete: false,
@@ -77,7 +82,10 @@ function beginBenchmarkRun(
 }
 
 function createBenchmarkResult(runState: BenchmarkRunState): BenchmarkResult {
-  const metrics = calculateBenchmarkMetrics(runState.frameTimesMs);
+  const metrics = calculateBenchmarkMetrics(
+    runState.frameTimesMs.values,
+    runState.frameTimesMs.length,
+  );
 
   return {
     averageFps: metrics.averageFps,
@@ -150,10 +158,10 @@ export default function FluidCanvasBenchmark({
       let nextRunState: BenchmarkRunState = {
         ...currentRunState,
         lastFrameTimeMs: context.nowMs,
-        frameTimesMs:
-          frameTimeMs > 0
-            ? [...currentRunState.frameTimesMs, frameTimeMs]
-            : currentRunState.frameTimesMs,
+        frameTimesMs: appendBenchmarkFrameTime(
+          currentRunState.frameTimesMs,
+          frameTimeMs,
+        ),
       };
 
       const elapsedMs = context.nowMs - nextRunState.startedAtMs;
@@ -214,6 +222,7 @@ export default function FluidCanvasBenchmark({
       <FluidCanvasGPU
         width={BENCHMARK_RESOLUTION.width}
         height={BENCHMARK_RESOLUTION.height}
+        displayScale={BENCHMARK_DISPLAY_SCALE}
         boundaries={BENCHMARK_BOUNDARIES}
         interactionMode={InteractionMode.AddVelocity}
         obstacleEraser={false}

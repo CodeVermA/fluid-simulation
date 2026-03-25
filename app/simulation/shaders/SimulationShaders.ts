@@ -54,8 +54,13 @@ void main() {
         return;
     }
 
-    vec4 color = texture(u_texture, v_texCoord);
-    outColor = vec4(color.rgb, 1.0);
+    vec3 dye = max(texture(u_texture, v_texCoord).rgb, vec3(0.0));
+
+    // Soft tone mapping keeps dense dye from blowing out into harsh white glare.
+    vec3 displayColor = 1.0 - exp(-0.9 * dye);
+    displayColor = pow(displayColor, vec3(0.95));
+
+    outColor = vec4(displayColor, 1.0);
 }
 `;
 

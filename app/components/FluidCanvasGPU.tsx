@@ -9,11 +9,20 @@ import { InteractionMode as InteractionModeEnum, type InteractionMode } from '..
 
 const FPS = 165;
 const MIN_SPLAT_RADIUS = 0.0001;
+const POINTER_VELOCITY_REFERENCE_FRAME_MS = 1000 / 60;
+const POINTER_VELOCITY_APLIFIER = 25.0;
+
+export type VelocityControlMode = 'manual' | 'mouse';
+
+function getPointerVelocity(distance: number, elapsedMs: number) {
+  return (distance / Math.max(elapsedMs, 1)) * POINTER_VELOCITY_REFERENCE_FRAME_MS * POINTER_VELOCITY_APLIFIER;
+}
 
 export interface FluidCanvasSimulationParams {
   temperature: number;
   velocity: { x: number; y: number };
   viscosity: number;
+  densityDiffusion: boolean;
   slipCondition: number;
   penWidth: number;
   vorticityStrength: number;
@@ -42,11 +51,13 @@ export interface FluidCanvasAutomation {
 interface FluidCanvasGPUProps {
   width: number;
   height: number;
+  displayScale?: number;
   boundaries: { top: boolean; bottom: boolean; left: boolean; right: boolean };
   interactionMode: InteractionMode;
   obstacleEraser: boolean;
   hideObstacles: boolean;
   simulationParams: FluidCanvasSimulationParams;
+  velocityControlMode?: VelocityControlMode;
   showFPS?: boolean;
   interactive?: boolean;
   automation?: FluidCanvasAutomation;
@@ -62,11 +73,13 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     {
       width,
       height,
+      displayScale = 1,
       boundaries,
       interactionMode,
       obstacleEraser,
       hideObstacles,
       simulationParams,
+      velocityControlMode = 'manual',
       showFPS = true,
       interactive = true,
       automation,
@@ -78,6 +91,8 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const solverRef = useRef<FluidSolverGPU | null>(null);
     const fluidUtilsRef = useRef<FluidUtils | null>(null);
+    const displayWidth = Math.max(1, Math.round(width * displayScale));
+    const displayHeight = Math.max(1, Math.round(height * displayScale));
 
     const canvasSizeRef = useRef({ width, height });
     const boundariesRef = useRef(boundaries);
@@ -85,6 +100,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     const obstacleEraserRef = useRef(obstacleEraser);
     const hideObstaclesRef = useRef(hideObstacles);
     const simulationParamsRef = useRef(simulationParams);
+    const velocityControlModeRef = useRef<VelocityControlMode>(velocityControlMode);
     const showFPSRef = useRef(showFPS);
     const interactiveRef = useRef(interactive);
     const automationRef = useRef(automation);
@@ -94,6 +110,8 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     const isMouseDown = useRef(false);
     const mousePos = useRef({ x: 0, y: 0 });
     const lastMousePos = useRef({ x: 0, y: 0 });
+    const pendingPointerMotion = useRef({ dx: 0, dy: 0, dtMs: 0 });
+    const lastPointerTimestamp = useRef<number | null>(null);
     const hasSplatted = useRef(false);
     const colour = useRef({ r: 1, g: 1, b: 1 });
 
@@ -120,6 +138,10 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
     useEffect(() => {
       simulationParamsRef.current = simulationParams;
     }, [simulationParams]);
+
+    useEffect(() => {
+      velocityControlModeRef.current = velocityControlMode;
+    }, [velocityControlMode]);
 
     useEffect(() => {
       showFPSRef.current = showFPS;
@@ -157,7 +179,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
 
       try {
         const solver = new FluidSolverGPU(canvas, width, height);
-        const utils = new FluidUtils(solver.resources);
+        const utils = new FluidUtils(solver.resources, width, height);
 
         solverRef.current = solver;
         fluidUtilsRef.current = utils;
@@ -206,6 +228,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
           const viscosity = params.viscosity;
           const vorticityMultiplier = params.vorticityStrength;
           const iterations = params.performance;
+          const densityDiffusion = params.densityDiffusion;
           const splatRadius = MIN_SPLAT_RADIUS * params.penWidth;
 
           if (interactiveRef.current && isMouseDown.current && !hasSplatted.current) {
@@ -215,6 +238,21 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
 
             if (moved) {
               if (mode === InteractionModeEnum.AddVelocity) {
+                const shouldUsePointerVelocity =
+                  velocityControlModeRef.current === 'mouse';
+                const velocityX = shouldUsePointerVelocity
+                  ? getPointerVelocity(
+                    pendingPointerMotion.current.dx,
+                    pendingPointerMotion.current.dtMs,
+                  )
+                  : params.velocity.x;
+                const velocityY = shouldUsePointerVelocity
+                  ? getPointerVelocity(
+                    -pendingPointerMotion.current.dy,
+                    pendingPointerMotion.current.dtMs,
+                  )
+                  : params.velocity.y;
+
                 solver.splat(
                   solver.density,
                   mousePos.current.x,
@@ -228,8 +266,8 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
                   solver.velocity,
                   mousePos.current.x,
                   mousePos.current.y,
-                  params.velocity.x,
-                  params.velocity.y,
+                  velocityX,
+                  velocityY,
                   0.0,
                   splatRadius,
                 );
@@ -253,6 +291,7 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
               }
 
               hasSplatted.current = true;
+              pendingPointerMotion.current = { dx: 0, dy: 0, dtMs: 0 };
             }
           }
 
@@ -271,7 +310,14 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
             }) !== false;
 
           if (shouldAdvanceSimulation) {
-            solver.step(dt, freeSlip, viscosity, vorticityMultiplier, iterations);
+            solver.step(
+              dt,
+              freeSlip,
+              viscosity,
+              vorticityMultiplier,
+              iterations,
+              densityDiffusion,
+            );
 
             switch (mode) {
               case InteractionModeEnum.VelocityVectors:
@@ -325,6 +371,8 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
       isMouseDown.current = true;
       mousePos.current = { x, y };
       lastMousePos.current = { x, y };
+      pendingPointerMotion.current = { dx: 0, dy: 0, dtMs: 0 };
+      lastPointerTimestamp.current = e.timeStamp;
       hasSplatted.current = false;
 
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -334,10 +382,21 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
       if (!interactive || !isMouseDown.current) return;
 
       const rect = e.currentTarget.getBoundingClientRect();
-      mousePos.current = {
+      const nextMousePos = {
         x: ((e.clientX - rect.left) / rect.width) * width,
         y: ((e.clientY - rect.top) / rect.height) * height,
       };
+      const dtMs = lastPointerTimestamp.current === null
+        ? 0
+        : Math.max(e.timeStamp - lastPointerTimestamp.current, 0);
+
+      pendingPointerMotion.current = {
+        dx: pendingPointerMotion.current.dx + (nextMousePos.x - mousePos.current.x),
+        dy: pendingPointerMotion.current.dy + (nextMousePos.y - mousePos.current.y),
+        dtMs: pendingPointerMotion.current.dtMs + dtMs,
+      };
+      mousePos.current = nextMousePos;
+      lastPointerTimestamp.current = e.timeStamp;
 
       hasSplatted.current = false;
     };
@@ -347,6 +406,8 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
 
       isMouseDown.current = false;
       hasSplatted.current = false;
+      pendingPointerMotion.current = { dx: 0, dy: 0, dtMs: 0 };
+      lastPointerTimestamp.current = null;
       e.currentTarget.releasePointerCapture(e.pointerId);
     };
 
@@ -354,11 +415,10 @@ const FluidCanvasGPU = forwardRef<FluidCanvasGPUHandle, FluidCanvasGPUProps>(
       <div className="relative w-full max-w-7xl">
         <canvas
           ref={canvasRef}
-          width={width}
-          height={height}
-          className={`border-2 border-gray-700 rounded-xl shadow-2xl bg-black w-full transition-colors duration-300 ${
-            interactive ? 'hover:border-cyan-500/50 cursor-crosshair' : 'cursor-default'
-          }`}
+          width={displayWidth}
+          height={displayHeight}
+          className={`border-2 border-gray-700 rounded-xl shadow-2xl bg-black w-full transition-colors duration-300 ${interactive ? 'hover:border-cyan-500/50 cursor-crosshair' : 'cursor-default'
+            }`}
           onPointerDown={interactive ? handlePointerDown : undefined}
           onPointerMove={interactive ? handlePointerMove : undefined}
           onPointerUp={interactive ? handlePointerUp : undefined}

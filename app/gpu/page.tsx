@@ -1,7 +1,10 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import FluidCanvasGPU, { FluidCanvasGPUHandle } from "../components/FluidCanvasGPU";
+import FluidCanvasGPU, {
+  type FluidCanvasGPUHandle,
+  type VelocityControlMode,
+} from "../components/FluidCanvasGPU";
 import Link from "next/link";
 import { BackIcon, ClearIcon, EraserIcon } from '../components/Icons';
 import {
@@ -10,7 +13,8 @@ import {
   type InteractionMode,
 } from '../types/interactionMode';
 
-const SCREEN_RESOLUTION = [640, 360];
+const SCREEN_RESOLUTION = [432, 240];
+const DISPLAY_SCALE = 2;
 
 export default function GPUPage() {
   const canvasRef = useRef<FluidCanvasGPUHandle>(null);
@@ -19,17 +23,72 @@ export default function GPUPage() {
   const [interactionMode, setInteractionMode] = useState<InteractionMode>(InteractionModeEnum.AddVelocity);
   const [obstacleEraser, setObstacleEraser] = useState(false);
   const [hideObstacles, setHideObstacles] = useState(true);
+  const [velocityControlMode, setVelocityControlMode] = useState<VelocityControlMode>('manual');
 
   // Simulation parameters
   const [simulationParams, setSimulationParams] = useState({
     temperature: 0,
     velocity: { x: 10, y: 6 },
     viscosity: 0.0001,
+    densityDiffusion: false,
     performance: 50,
     slipCondition: 0,
     penWidth: 5,
     vorticityStrength: 1,
   });
+  const [velocityInputValues, setVelocityInputValues] = useState({
+    x: '10',
+    y: '6',
+  });
+
+  const handleVelocityInputChange = (axis: 'x' | 'y', value: string) => {
+    setVelocityInputValues((current) => ({
+      ...current,
+      [axis]: value,
+    }));
+
+    if (value === '' || value === '-' || value === '.' || value === '-.') {
+      return;
+    }
+
+    const nextValue = Number(value);
+    if (Number.isNaN(nextValue)) {
+      return;
+    }
+
+    setSimulationParams((current) => ({
+      ...current,
+      velocity: {
+        ...current.velocity,
+        [axis]: nextValue,
+      },
+    }));
+  };
+
+  const handleVelocityInputBlur = (axis: 'x' | 'y') => {
+    const value = velocityInputValues[axis];
+    if (value === '' || value === '-' || value === '.' || value === '-.') {
+      setVelocityInputValues((current) => ({
+        ...current,
+        [axis]: String(simulationParams.velocity[axis]),
+      }));
+      return;
+    }
+
+    const nextValue = Number(value);
+    if (Number.isNaN(nextValue)) {
+      setVelocityInputValues((current) => ({
+        ...current,
+        [axis]: String(simulationParams.velocity[axis]),
+      }));
+      return;
+    }
+
+    setVelocityInputValues((current) => ({
+      ...current,
+      [axis]: String(nextValue),
+    }));
+  };
 
   const handleReset = () => {
     canvasRef.current?.reset();
@@ -163,10 +222,10 @@ export default function GPUPage() {
             <h3 className="text-base font-semibold text-cyan-400 mb-4 flex items-center gap-2">
               <span className="text-lg"></span> Simulation Parameters
             </h3>
-            <div className="space-y-4">
+            <div className="divide-y divide-gray-700/60 [&>div]:py-4 [&>div:first-child]:pt-0 [&>div:last-child]:pb-0">
               {/* Temperature Slider */}
               <div>
-                <label className="text-sm font-medium text-white mb-2 flex justify-between">
+                <label className="text-sm font-medium text-white flex justify-between">
                   <span>Temperature</span>
                   <span className="text-gray-400 font-mono">{simulationParams.temperature}</span>
                 </label>
@@ -187,38 +246,73 @@ export default function GPUPage() {
 
               {/* Velocity Controls */}
               <div>
-                <label className="text-sm font-medium text-white mb-2 flex justify-between">
-                  <span>Velocity</span>
-                  <span className="text-gray-400 font-mono">
-                    x: {simulationParams.velocity.x.toFixed(1)} y: {simulationParams.velocity.y.toFixed(1)}
-                  </span>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">X</label>
-                    <input
-                      type="number"
-                      value={simulationParams.velocity.x}
-                      onChange={(e) => setSimulationParams({ ...simulationParams, velocity: { ...simulationParams.velocity, x: Number(e.target.value) } })}
-                      step="0.1"
-                      className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-600 hover:border-cyan-500 focus:border-cyan-500 focus:outline-none transition-colors text-sm"
+                <div className="flex items-center flex-wrap justify-between gap-2 mb-2">
+                  <label className="text-sm font-medium text-white">
+                    Velocity Input
+                  </label>
+
+                  <div className="relative bg-gray-700 rounded-lg p-1 flex">
+                    <div
+                      className={`absolute inset-y-1 w-[calc(50%-4px)] bg-cyan-600 rounded-md transition-transform duration-300 ease-out ${velocityControlMode === 'mouse' ? 'translate-x-full' : 'translate-x-0'
+                        }`}
                     />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Y</label>
-                    <input
-                      type="number"
-                      value={simulationParams.velocity.y}
-                      onChange={(e) => setSimulationParams({ ...simulationParams, velocity: { ...simulationParams.velocity, y: Number(e.target.value) } })}
-                      step="0.1"
-                      className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-600 hover:border-cyan-500 focus:border-cyan-500 focus:outline-none transition-colors text-sm"
-                    />
+
+                    <button
+                      type="button"
+                      onClick={() => setVelocityControlMode('manual')}
+                      className={`relative z-10 px-3 py-1.5 rounded-md text-xs font-medium transition-colors duration-200 ${velocityControlMode === 'manual' ? 'text-white' : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                    >
+                      Manual
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setVelocityControlMode('mouse')}
+                      className={`relative z-10 px-3 py-1.5 rounded-md text-xs font-medium transition-colors duration-200 ${velocityControlMode === 'mouse' ? 'text-white' : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                    >
+                      Mouse
+                    </button>
                   </div>
                 </div>
+
+                {velocityControlMode === 'manual' && (
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">X</label>
+                      <input
+                        type="number"
+                        value={velocityInputValues.x}
+                        onChange={(e) => handleVelocityInputChange('x', e.target.value)}
+                        onBlur={() => handleVelocityInputBlur('x')}
+                        step="0.1"
+                        className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-600 hover:border-cyan-500 focus:border-cyan-500 focus:outline-none transition-colors text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 mb-1 block">Y</label>
+                      <input
+                        type="number"
+                        value={velocityInputValues.y}
+                        onChange={(e) => handleVelocityInputChange('y', e.target.value)}
+                        onBlur={() => handleVelocityInputBlur('y')}
+                        step="0.1"
+                        className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-600 hover:border-cyan-500 focus:border-cyan-500 focus:outline-none transition-colors text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {velocityControlMode === 'mouse' && (
+                  <p className="mt-3 text-xs text-gray-400">
+                    Velocity comes from your mouse speed and direction.
+                  </p>
+                )}
               </div>
 
               {/* Viscosity */}
-              <div className="flex flex-col gap-2 mt-4">
+              <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium text-white flex justify-between">
                   <span>Viscosity</span>
                   <span className="text-gray-400 font-mono">{simulationParams.viscosity.toFixed(4)}</span>
@@ -266,9 +360,48 @@ export default function GPUPage() {
                 </div>
               </div>
 
+              {/* Density Diffusion */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-white">
+                    Density Diffusion
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSimulationParams({
+                        ...simulationParams,
+                        densityDiffusion: !simulationParams.densityDiffusion,
+                      })
+                    }
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors duration-200 ${simulationParams.densityDiffusion
+                      ? 'border-cyan-400 bg-cyan-500/80'
+                      : 'border-gray-600 bg-gray-700'
+                      }`}
+                    aria-pressed={simulationParams.densityDiffusion}
+                    aria-label={
+                      simulationParams.densityDiffusion
+                        ? 'Disable density diffusion'
+                        : 'Enable density diffusion'
+                    }
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform duration-200 ${simulationParams.densityDiffusion
+                        ? 'translate-x-6'
+                        : 'translate-x-1'
+                        }`}
+                    />
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500">
+                  {simulationParams.densityDiffusion ? 'Enabled. Requires more computational resources' : 'Disabled'}
+                </p>
+              </div>
+
               {/* Pen Width Slider */}
               <div>
-                <label className="text-sm font-medium text-white mb-2 flex justify-between">
+                <label className="text-sm font-medium text-white flex justify-between">
                   <span>Pen Width</span>
                   <span className="text-gray-400 font-mono">{simulationParams.penWidth}</span>
                 </label>
@@ -287,42 +420,49 @@ export default function GPUPage() {
                 </div>
               </div>
 
-              {/* Slip Condition Slider */}
+              {/* Boundary Friction Toggle */}
               <div>
-                <label className="text-sm font-medium text-white mb-2 flex justify-between">
-                  <span>Boundary Friction</span>
-                  <span className="text-gray-400 font-mono">{simulationParams.slipCondition === 0 ? 'Slippery' : 'High Friction'}</span>
-                </label>
-                <div className="relative bg-gray-700 rounded-lg p-1 flex">
-                  {/* Sliding background indicator */}
-                  <div
-                    className={`absolute inset-y-1 w-[calc(50%-4px)] bg-cyan-600 rounded-md transition-transform duration-300 ease-out ${simulationParams.slipCondition === 1 ? 'translate-x-full' : 'translate-x-0'
-                      }`}
-                  />
+                <div className="flex items-center flex-wrap justify-between gap-2 mb-2">
+                  <label className="text-sm font-medium text-white">
+                    Boundary Friction
+                  </label>
 
-                  {/* Free-Slip Button */}
-                  <button
-                    onClick={() => setSimulationParams({ ...simulationParams, slipCondition: 0 })}
-                    className={`relative z-10 flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${simulationParams.slipCondition === 0 ? 'text-white' : 'text-gray-400 hover:text-gray-200'
-                      }`}
-                  >
-                    Free-Slip
-                  </button>
+                  <div className="relative flex w-40 shrink-0 rounded-md bg-gray-700 p-0.5">
+                    <div
+                      className={`absolute inset-y-0.5 w-[calc(50%-2px)] rounded-sm bg-cyan-600 transition-transform duration-300 ease-out ${simulationParams.slipCondition === 1 ? 'translate-x-full' : 'translate-x-0'
+                        }`}
+                    />
 
-                  {/* No-Slip Button */}
-                  <button
-                    onClick={() => setSimulationParams({ ...simulationParams, slipCondition: 1 })}
-                    className={`relative z-10 flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors duration-200 ${simulationParams.slipCondition === 1 ? 'text-white' : 'text-gray-400 hover:text-gray-200'
-                      }`}
-                  >
-                    No-Slip
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setSimulationParams({ ...simulationParams, slipCondition: 0 })}
+                      className={`relative z-10 flex-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors duration-200 ${simulationParams.slipCondition === 0 ? 'text-white' : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                    >
+                      Free-Slip
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSimulationParams({ ...simulationParams, slipCondition: 1 })}
+                      className={`relative z-10 flex-1 rounded-sm px-2 py-1 text-xs font-medium transition-colors duration-200 ${simulationParams.slipCondition === 1 ? 'text-white' : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                    >
+                      No-Slip
+                    </button>
+                  </div>
                 </div>
+
+                <p className="text-xs text-gray-400">
+                  {simulationParams.slipCondition === 0
+                    ? 'Slippery: Only the object-facing velocity component is affected.'
+                    : 'High Friction: Both x and y components are affected.'}
+                </p>
               </div>
 
               {/* Vorticity Strength */}
               <div>
-                <label className="text-sm font-medium text-white mb-2 flex justify-between">
+                <label className="text-sm font-medium text-white flex justify-between">
                   <span>Vorticity Strength</span>
                   <span className="text-gray-400 font-mono">{simulationParams.vorticityStrength}x</span>
                 </label>
@@ -337,13 +477,13 @@ export default function GPUPage() {
                 />
                 <div className="flex justify-between text-xs text-gray-500 mt-1">
                   <span>Normal</span>
-                  <span>High Turbulance</span>
+                  <span>High Turbulence</span>
                 </div>
               </div>
 
               {/* Solver Iterations */}
               <div>
-                <label className="text-sm font-medium text-white mb-2 flex justify-between">
+                <label className="text-sm font-medium text-white flex justify-between">
                   <span>Solver Iterations</span>
                   <span className="text-gray-400 font-mono">{simulationParams.performance}</span>
                 </label>
@@ -401,16 +541,18 @@ export default function GPUPage() {
 
       {/* Main Canvas Area */}
       <main className="flex-1 flex items-center justify-center p-2 md:p-4 w-full">
-        <div className="flex items-center justify-center w-full h-full">
+        <div className="flex items-center justify-center w-full max-w-[95%] h-full">
           <FluidCanvasGPU
             ref={canvasRef}
             width={SCREEN_RESOLUTION[0]}
             height={SCREEN_RESOLUTION[1]}
+            displayScale={DISPLAY_SCALE}
             boundaries={boundaries}
             interactionMode={interactionMode}
             obstacleEraser={obstacleEraser}
             hideObstacles={hideObstacles}
             simulationParams={simulationParams}
+            velocityControlMode={velocityControlMode}
           />
         </div>
       </main>

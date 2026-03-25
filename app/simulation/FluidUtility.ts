@@ -15,7 +15,12 @@ export class FluidUtils {
   private arrowVAO: WebGLVertexArrayObject;
   private arrowVertexCount: number;
 
-  constructor(resources: GPUResources, gridSpacing: number = 15) {
+  constructor(
+    resources: GPUResources,
+    gridWidth: number,
+    gridHeight: number,
+    gridSpacing: number = 10,
+  ) {
     this.gl = resources.gl;
     this.program = resources.createProgram(
       VERTEX_SHADER,
@@ -26,7 +31,7 @@ export class FluidUtils {
       VELOCITY_LINES_FRAGMENT_SHADER,
     );
     this.quadVAO = resources.createFullScreenQuad();
-    const arrowGrid = resources.createArrowGrid(gridSpacing);
+    const arrowGrid = resources.createArrowGrid(gridWidth, gridHeight, gridSpacing);
     this.arrowVAO = arrowGrid.vao;
     this.arrowVertexCount = arrowGrid.vertexCount;
   }
@@ -36,10 +41,11 @@ export class FluidUtils {
    */
   renderDivergence(solver: FluidSolverGPU) {
     const gl = this.gl;
+    const canvas = gl.canvas as HTMLCanvasElement;
 
     // Bind default screen buffer
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, solver.width, solver.height);
+    gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -65,9 +71,10 @@ export class FluidUtils {
    */
   public renderVelocityArrows(solver: FluidSolverGPU) {
     const gl = this.gl;
+    const canvas = gl.canvas as HTMLCanvasElement;
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, solver.width, solver.height);
+    gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 

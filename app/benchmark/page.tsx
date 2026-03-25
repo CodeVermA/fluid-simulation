@@ -5,6 +5,7 @@ import Link from "next/link";
 import FluidCanvasBenchmark from "../components/FluidCanvasBenchmark";
 import { BackIcon } from '../components/Icons';
 import {
+  BENCHMARK_DISPLAY_SCALE,
   BENCHMARK_DURATION_MS,
   BENCHMARK_RESOLUTION,
   BENCHMARK_SOLVER_ITERATIONS,
@@ -17,6 +18,7 @@ export default function BenchmarkPage() {
   const [runId, setRunId] = useState(0);
   const [status, setStatus] = useState<BenchmarkStatus>('idle');
   const [result, setResult] = useState<BenchmarkResult | null>(null);
+  const [showVisualNotice, setShowVisualNotice] = useState(true);
 
   const handleStart = () => {
     setResult(null);
@@ -35,11 +37,10 @@ export default function BenchmarkPage() {
 
   const benchmarkSummary = result
     ? [
-        `Solver Iterations: ${BENCHMARK_SOLVER_ITERATIONS}`,
         `Average FPS: ${result.averageFps.toFixed(1)}`,
         `1% Low: ${result.onePercentLowFps.toFixed(1)}`,
         `Device Memory: ${result.deviceMemory}`,
-        `Platform/OS: ${result.platformOs}`,
+        `OS: ${result.platformOs}`,
         `Renderer: ${result.renderer}`,
         `Sampled Frames: ${result.sampledFrames}`,
       ].join('\n')
@@ -64,13 +65,38 @@ export default function BenchmarkPage() {
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm text-gray-300 md:text-base">
                   This page runs a fixed 60 second fluid workload with the same
-                  resolution and solver iterations for everyone, then records benchmark
-                  results from the live simulation.
+                  simulation resolution, display scale, and solver iterations for
+                  everyone, then records benchmark results from the live simulation.
                 </p>
               </div>
+              {showVisualNotice && (
+                <div
+                  role="alert"
+                  className="max-w-2xl rounded-2xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-50 shadow-lg"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">
+                        Visual Notice
+                      </p>
+                      <p className="mt-2 leading-6 text-amber-50/90">
+                        Dense fluid can still appear bright during heavy bursts. The highlight glare has been reduced,
+                        but if the scene still feels intense, lower your screen brightness or stop the benchmark.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowVisualNotice(false)}
+                      className="shrink-0 rounded-lg border border-amber-300/25 px-3 py-1.5 text-xs font-medium text-amber-100 transition-colors duration-200 hover:bg-amber-400/10"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2 text-xs text-gray-200">
                 <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5">
-                  Resolution: {BENCHMARK_RESOLUTION.width} x {BENCHMARK_RESOLUTION.height}
+                  Simulation: {BENCHMARK_RESOLUTION.width} x {BENCHMARK_RESOLUTION.height}
                 </span>
                 <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5">
                   Solver Iterations: {BENCHMARK_SOLVER_ITERATIONS}
@@ -94,7 +120,7 @@ export default function BenchmarkPage() {
                   <MetricCard label="Average FPS" value={result.averageFps.toFixed(1)} />
                   <MetricCard label="1% Low" value={result.onePercentLowFps.toFixed(1)} />
                   <MetricCard label="Device Memory" value={result.deviceMemory} />
-                  <MetricCard label="Platform/OS" value={result.platformOs} />
+                  <MetricCard label="OS" value={result.platformOs} />
                 </div>
               )}
             </div>
