@@ -7,7 +7,7 @@ import { getColor } from '../utils/colorUtils';
 import { createFPSTracker, sampleFPS } from '../utils/fpsUtils';
 import { InteractionMode as InteractionModeEnum, type InteractionMode } from '../types/interactionMode';
 
-const FPS = 165;
+const FPS = 60;
 const MIN_SPLAT_RADIUS = 0.0001;
 const POINTER_VELOCITY_REFERENCE_FRAME_MS = 1000 / 60;
 const POINTER_VELOCITY_APLIFIER = 25.0;
