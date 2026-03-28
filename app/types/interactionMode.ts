@@ -13,7 +13,7 @@ export const INTERACTION_MODE_LIST: ReadonlyArray<{
   label: string;
 }> = [
   { id: InteractionMode.AddVelocity, label: "Inject Velocity" },
-  { id: InteractionMode.ChangeTemp, label: "Change Temperature" },
+  { id: InteractionMode.ChangeTemp, label: "Inject Temperature" },
   { id: InteractionMode.DrawObstacles, label: "Draw Obstacles" },
   { id: InteractionMode.VelocityVectors, label: "Velocity Vectors" },
 ];

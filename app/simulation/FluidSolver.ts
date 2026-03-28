@@ -39,7 +39,7 @@ export class FluidSolverGPU {
   obstacles: DoubleFramebuffer;
 
   // Boundary configuration
-  boundaryThickness: number = 5; // Object boundary thickness in pixels
+  private readonly BOUNDARY_WIDTH: number = 2; 
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -449,7 +449,7 @@ export class FluidSolverGPU {
     gl.enable(gl.SCISSOR_TEST);
     gl.clearColor(1, 0, 0, 1); // Set clear color to "Solid" (1.0)
 
-    const thickness = this.boundaryThickness; // Wall thickness in pixels
+    const thickness = this.BOUNDARY_WIDTH; // Wall thickness in pixels
 
     // Draw Top Wall
     if (top) {

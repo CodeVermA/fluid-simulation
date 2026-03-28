@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import FluidCanvasGPU, {
   type FluidCanvasGPUHandle,
   type VelocityControlMode,
@@ -20,6 +20,7 @@ export default function GPUPage() {
   const canvasRef = useRef<FluidCanvasGPUHandle>(null);
   const [boundaries, setBoundaries] = useState({ top: true, bottom: true, left: true, right: true });
   const [isMenuExpanded, setIsMenuExpanded] = useState(false);
+  const hasManualMenuPreference = useRef(false);
   const [interactionMode, setInteractionMode] = useState<InteractionMode>(InteractionModeEnum.AddVelocity);
   const [obstacleEraser, setObstacleEraser] = useState(false);
   const [hideObstacles, setHideObstacles] = useState(true);
@@ -94,21 +95,56 @@ export default function GPUPage() {
     canvasRef.current?.reset();
   };
 
+  useEffect(() => {
+    const desktopMediaQuery = window.matchMedia('(min-width: 768px)');
+    const syncMenuState = (matches: boolean) => {
+      if (!hasManualMenuPreference.current) {
+        setIsMenuExpanded(matches);
+      }
+    };
+
+    syncMenuState(desktopMediaQuery.matches);
+
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      syncMenuState(event.matches);
+    };
+
+    desktopMediaQuery.addEventListener('change', handleViewportChange);
+
+    return () => {
+      desktopMediaQuery.removeEventListener('change', handleViewportChange);
+    };
+  }, []);
+
+  const toggleMenu = () => {
+    hasManualMenuPreference.current = true;
+    setIsMenuExpanded((current) => !current);
+  };
+
+  const closeMenu = () => {
+    hasManualMenuPreference.current = true;
+    setIsMenuExpanded(false);
+  };
+
   return (
     <div className="flex h-screen bg-gradient-to-b from-gray-900 to-black text-white overflow-hidden relative">
       {/* Mobile Overlay */}
       {isMenuExpanded && (
         <div
           className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
-          onClick={() => setIsMenuExpanded(false)}
+          onClick={closeMenu}
         />
       )}
 
-      {/* Mobile Toggle Button */}
+      {/* Sidebar Toggle Button */}
       <button
-        onClick={() => setIsMenuExpanded(!isMenuExpanded)}
-        className="md:hidden fixed top-4 left-4 z-50 bg-gray-800/90 backdrop-blur-sm border border-gray-600 text-white p-3 rounded-lg shadow-lg hover:bg-gray-700 transition-colors"
-        aria-label="Toggle settings"
+        onClick={toggleMenu}
+        className={`
+          fixed top-4 left-4 z-50 rounded-lg border border-gray-600 bg-gray-800/90 p-3 text-white shadow-lg backdrop-blur-sm
+          transition-[left,background-color] duration-300 hover:bg-gray-700
+          ${isMenuExpanded ? 'md:left-[21rem]' : 'md:left-4'}
+        `}
+        aria-label={isMenuExpanded ? 'Hide settings' : 'Show settings'}
       >
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           {isMenuExpanded ? (
@@ -120,27 +156,33 @@ export default function GPUPage() {
       </button>
 
       {/* Left Sidebar - Controls Panel */}
-      <aside className={`
-        w-90 bg-gray-800/40 backdrop-blur-sm border-r border-gray-700 flex flex-col overflow-y-auto
-        md:relative md:translate-x-0
-        fixed inset-y-0 left-0 z-40 transition-transform duration-300 ease-in-out
-        ${isMenuExpanded ? 'translate-x-0' : '-translate-x-full'}
-      `}>
+      <div
+        className={`
+          relative h-full w-0 shrink-0 transition-[width] duration-300 ease-in-out md:min-h-0 md:overflow-hidden
+          ${isMenuExpanded ? 'md:w-90' : 'md:w-0'}
+        `}
+      >
+        <aside className={`
+          h-full w-90 bg-gray-800/40 backdrop-blur-sm border-r border-gray-700 flex flex-col
+          fixed inset-y-0 left-0 z-40 md:relative
+          transition-transform duration-300 ease-in-out
+          ${isMenuExpanded ? 'translate-x-0' : '-translate-x-full'}
+        `}>
         {/* Header Section */}
-        <div className="p-6 border-b border-gray-700">
+        <div className="px-6 py-4 border-b border-gray-700">
           <Link
             href="/"
-            className="group text-blue-400 hover:text-blue-300 transition-colors duration-200 text-sm inline-flex items-center gap-2 mb-2"
+            className="group text-blue-400 hover:text-blue-300 transition-colors duration-200 text-sm inline-flex items-center gap-2 mb-1"
           >
             {/* Arrow */}
             <BackIcon className="transition-transform duration-200 group-hover:-translate-x-0.5" />
             Home
           </Link>
 
-          <h1 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-600 mb-2">
+          <h1 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-600 mb-1">
             FLUID SIMULATION
           </h1>
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center justify-between gap-3">
             <p className="text-gray-400 text-xs">Real-time WebGL2 simulation</p>
             <button
               onClick={handleReset}
@@ -158,7 +200,7 @@ export default function GPUPage() {
         {/* Scrollable Controls Section */}
 
 
-        <div className="flex-1 p-2 pb-15 space-y-4">
+        <div className="simulation-scrollbar min-h-0 flex-1 overflow-y-auto p-2 pb-15 space-y-4">
           {/* Interaction Mode */}
           <div className="bg-gray-900/60 backdrop-blur-sm border border-gray-700 rounded-xl p-5 shadow-lg">
             <h3 className="text-base font-semibold text-cyan-400 mb-4">Interaction Mode</h3>
@@ -537,7 +579,8 @@ export default function GPUPage() {
             </div>
           </div>
         </div>
-      </aside>
+        </aside>
+      </div>
 
       {/* Main Canvas Area */}
       <main className="flex-1 flex items-center justify-center p-2 md:p-4 w-full">
