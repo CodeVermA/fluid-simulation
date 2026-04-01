@@ -446,24 +446,20 @@ in vec2 v_texCoord;
 
 uniform sampler2D u_velocity;
 uniform sampler2D u_temperature;
-uniform sampler2D u_density;
 
 uniform float u_ambientTemperature;
 uniform float u_dt;
-uniform float u_alpha; // Weight of the dye
 uniform float u_beta;  // Buoyancy of the heat
 
 out vec4 outColor;
 
 void main() {
     float T = texture(u_temperature, v_texCoord).r;
-    vec3 dye = texture(u_density, v_texCoord).rgb;
-    float D = dot(dye, vec3(0.3333333));
     vec2 V = texture(u_velocity, v_texCoord).xy;
 
-    // f_buoy = (-alpha * D + beta * (T - T_amb)) * direction
+    // f_buoy = beta * (T - T_amb) * direction
     // In our WebGL coordinate system, +Y is upwards.
-    float forceY = (-u_alpha * D) + (u_beta * (T - u_ambientTemperature));
+    float forceY = u_beta * (T - u_ambientTemperature);
 
     // Integrate force into velocity
     V.y += forceY * u_dt;

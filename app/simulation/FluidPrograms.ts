@@ -9,7 +9,7 @@ import {
   CURL_SHADER,
   VORTICITY_SHADER,
   BUOYANCY_SHADER,
-} from "./shaders/SimulationShaders";
+} from "./shaders/SolverShaders";
 import { OBSTACLES_SHADER } from "./shaders/UtilityShaders";
 import { GPUResources } from "./GPUResources";
 
@@ -90,10 +90,8 @@ function buildUniforms(gl: WebGL2RenderingContext, p: FluidShaders) {
     buoyancy: getUniforms(gl, p.buoyancyProgram, [
       "velocity",
       "temperature",
-      "density",
       "ambientTemperature",
       "dt",
-      "alpha",
       "beta",
     ] as const),
   };

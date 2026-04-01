@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from "next/link";
-import FluidCanvasBenchmark from "../components/FluidCanvasBenchmark";
+import FluidCanvasBenchmark from "../components/BenchmarkCanvas";
 import { BackIcon } from '../components/Icons';
 import {
   BENCHMARK_DISPLAY_SCALE,

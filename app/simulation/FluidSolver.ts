@@ -2,8 +2,7 @@ import { GPUResources, DoubleFramebuffer } from "./GPUResources";
 import { FluidShaders } from "./FluidPrograms";
 
 export class FluidSolverGPU {
-  // Boussinesq buoyancy parameters: f_y = -alpha * rho + beta * (T - T_amb)
-  private readonly BUOYANCY_ALPHA = 0.05;
+  // Temperature buoyancy parameter: f_y = beta * (T - T_amb)
   private readonly BUOYANCY_BETA = 1.25;
   private readonly AMBIENT_TEMP = 0.0;
 
@@ -39,7 +38,7 @@ export class FluidSolverGPU {
   obstacles: DoubleFramebuffer;
 
   // Boundary configuration
-  private readonly BOUNDARY_WIDTH: number = 2; 
+  private readonly BOUNDARY_WIDTH: number = 2;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -315,7 +314,6 @@ export class FluidSolverGPU {
 
   private applyBuoyancy(
     dt: number,
-    alpha: number,
     beta: number,
     ambientTemperature: number = 0.0,
   ) {
@@ -327,22 +325,18 @@ export class FluidSolverGPU {
 
     gl.uniform1i(this.shaders.u.buoyancy.velocity, 0);
     gl.uniform1i(this.shaders.u.buoyancy.temperature, 1);
-    gl.uniform1i(this.shaders.u.buoyancy.density, 2);
 
     gl.uniform1f(
       this.shaders.u.buoyancy.ambientTemperature,
       ambientTemperature,
     );
     gl.uniform1f(this.shaders.u.buoyancy.dt, dt);
-    gl.uniform1f(this.shaders.u.buoyancy.alpha, alpha);
     gl.uniform1f(this.shaders.u.buoyancy.beta, beta);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.velocity.read.texture);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.temperature.read.texture);
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.density.read.texture);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.velocity.write.framebuffer);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -563,7 +557,6 @@ export class FluidSolverGPU {
     // STEP 0: BUOYANCY (External Force)
     this.applyBuoyancy(
       dt,
-      this.BUOYANCY_ALPHA,
       this.BUOYANCY_BETA,
       this.AMBIENT_TEMP,
     );

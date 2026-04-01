@@ -5,7 +5,7 @@ import {
   VELOCITY_LINES_VERTEX_SHADER,
   VELOCITY_LINES_FRAGMENT_SHADER,
 } from "./shaders/UtilityShaders";
-import { VERTEX_SHADER } from "./shaders/SimulationShaders";
+import { VERTEX_SHADER } from "./shaders/SolverShaders";
 
 export class FluidUtils {
   private gl: WebGL2RenderingContext;
@@ -31,7 +31,11 @@ export class FluidUtils {
       VELOCITY_LINES_FRAGMENT_SHADER,
     );
     this.quadVAO = resources.createFullScreenQuad();
-    const arrowGrid = resources.createArrowGrid(gridWidth, gridHeight, gridSpacing);
+    const arrowGrid = resources.createArrowGrid(
+      gridWidth,
+      gridHeight,
+      gridSpacing,
+    );
     this.arrowVAO = arrowGrid.vao;
     this.arrowVertexCount = arrowGrid.vertexCount;
   }

@@ -5,7 +5,7 @@ import FluidCanvasGPU, {
   type FluidCanvasAutomation,
   type FluidCanvasFrameContext,
   type FluidCanvasRuntime,
-} from './FluidCanvasGPU';
+} from './SimulationCanvas';
 import { InteractionMode } from '../types/interactionMode';
 import {
   BENCHMARK_DISPLAY_SCALE,
